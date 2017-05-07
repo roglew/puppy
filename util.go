@@ -1,16 +1,16 @@
 package main
 
 import (
-	"sync"
-	"log"
 	"io/ioutil"
+	"log"
+	"sync"
 )
 
 type ConstErr string
 
 func (e ConstErr) Error() string { return string(e) }
 
-func DuplicateBytes(bs []byte) ([]byte) {
+func DuplicateBytes(bs []byte) []byte {
 	retBs := make([]byte, len(bs))
 	copy(retBs, bs)
 	return retBs

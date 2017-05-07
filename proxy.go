@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/tls"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"net"
@@ -15,53 +16,71 @@ import (
 var getNextSubId = IdCounter()
 var getNextStorageId = IdCounter()
 
+// Working on using this for webui
+type proxyWebUIHandler func(http.ResponseWriter, *http.Request, *InterceptingProxy)
+
 type savedStorage struct {
-	storage MessageStorage
+	storage     MessageStorage
 	description string
 }
 
 type InterceptingProxy struct {
-	slistener *ProxyListener
-	server    *http.Server
-	mtx       sync.Mutex
-	logger    *log.Logger
+	slistener    *ProxyListener
+	server       *http.Server
+	mtx          sync.Mutex
+	logger       *log.Logger
 	proxyStorage int
+	netDial      NetDialer
 
-	requestInterceptor RequestInterceptor
+	usingProxy   bool
+	proxyHost    string
+	proxyPort    int
+	proxyIsSOCKS bool
+	proxyCreds   *ProxyCredentials
+
+	requestInterceptor  RequestInterceptor
 	responseInterceptor ResponseInterceptor
-	wSInterceptor WSInterceptor
-	scopeChecker RequestChecker
-	scopeQuery MessageQuery
+	wSInterceptor       WSInterceptor
+	scopeChecker        RequestChecker
+	scopeQuery          MessageQuery
 
 	reqSubs []*ReqIntSub
 	rspSubs []*RspIntSub
-	wsSubs []*WSIntSub
+	wsSubs  []*WSIntSub
+
+	httpHandlers map[string]proxyWebUIHandler
 
 	messageStorage map[int]*savedStorage
+}
+
+type ProxyCredentials struct {
+	Username string
+	Password string
 }
 
 type RequestInterceptor func(req *ProxyRequest) (*ProxyRequest, error)
 type ResponseInterceptor func(req *ProxyRequest, rsp *ProxyResponse) (*ProxyResponse, error)
 type WSInterceptor func(req *ProxyRequest, rsp *ProxyResponse, msg *ProxyWSMessage) (*ProxyWSMessage, error)
 
-type proxyHandler struct {
-	Logger *log.Logger
-	IProxy *InterceptingProxy
-}
-
 type ReqIntSub struct {
-	id int
+	id          int
 	Interceptor RequestInterceptor
 }
 
 type RspIntSub struct {
-	id int
+	id          int
 	Interceptor ResponseInterceptor
 }
 
 type WSIntSub struct {
-	id int
+	id          int
 	Interceptor WSInterceptor
+}
+
+func (creds *ProxyCredentials) SerializeHeader() string {
+	toEncode := []byte(fmt.Sprintf("%s:%s", creds.Username, creds.Password))
+	encoded := base64.StdEncoding.EncodeToString(toEncode)
+	return fmt.Sprintf("Basic %s", encoded)
 }
 
 func NewInterceptingProxy(logger *log.Logger) *InterceptingProxy {
@@ -70,6 +89,7 @@ func NewInterceptingProxy(logger *log.Logger) *InterceptingProxy {
 	iproxy.slistener = NewProxyListener(logger)
 	iproxy.server = newProxyServer(logger, &iproxy)
 	iproxy.logger = logger
+	iproxy.httpHandlers = make(map[string]proxyWebUIHandler)
 
 	go func() {
 		iproxy.server.Serve(iproxy.slistener)
@@ -82,7 +102,7 @@ func (iproxy *InterceptingProxy) Close() {
 	// Will throw errors when the server finally shuts down and tries to call iproxy.slistener.Close a second time
 	iproxy.mtx.Lock()
 	defer iproxy.mtx.Unlock()
-	iproxy.slistener.Close() 
+	iproxy.slistener.Close()
 	//iproxy.server.Close()  // Coming eventually... I hope
 }
 
@@ -93,7 +113,7 @@ func (iproxy *InterceptingProxy) SetCACertificate(caCert *tls.Certificate) {
 	iproxy.slistener.SetCACertificate(caCert)
 }
 
-func (iproxy *InterceptingProxy) GetCACertificate() (*tls.Certificate) {
+func (iproxy *InterceptingProxy) GetCACertificate() *tls.Certificate {
 	return iproxy.slistener.GetCACertificate()
 }
 
@@ -119,7 +139,7 @@ func (iproxy *InterceptingProxy) GetMessageStorage(id int) (MessageStorage, stri
 	return savedStorage.storage, savedStorage.description
 }
 
-func (iproxy *InterceptingProxy) AddMessageStorage(storage MessageStorage, description string) (int) {
+func (iproxy *InterceptingProxy) AddMessageStorage(storage MessageStorage, description string) int {
 	iproxy.mtx.Lock()
 	defer iproxy.mtx.Unlock()
 	id := getNextStorageId()
@@ -139,8 +159,8 @@ func (iproxy *InterceptingProxy) CloseMessageStorage(id int) {
 }
 
 type SavedStorage struct {
-	Id int
-	Storage MessageStorage
+	Id          int
+	Storage     MessageStorage
 	Description string
 }
 
@@ -190,7 +210,7 @@ func (iproxy *InterceptingProxy) LoadScope(storageId int) error {
 	return nil
 }
 
-func (iproxy *InterceptingProxy) GetScopeChecker() (RequestChecker) {
+func (iproxy *InterceptingProxy) GetScopeChecker() RequestChecker {
 	iproxy.mtx.Lock()
 	defer iproxy.mtx.Unlock()
 	return iproxy.scopeChecker
@@ -212,19 +232,19 @@ func (iproxy *InterceptingProxy) SetScopeChecker(checker RequestChecker) error {
 	return nil
 }
 
-func (iproxy *InterceptingProxy) GetScopeQuery() (MessageQuery) {
+func (iproxy *InterceptingProxy) GetScopeQuery() MessageQuery {
 	iproxy.mtx.Lock()
 	defer iproxy.mtx.Unlock()
 	return iproxy.scopeQuery
 }
 
-func (iproxy *InterceptingProxy) SetScopeQuery(query MessageQuery) (error) {
+func (iproxy *InterceptingProxy) SetScopeQuery(query MessageQuery) error {
 	iproxy.mtx.Lock()
 	defer iproxy.mtx.Unlock()
 	return iproxy.setScopeQuery(query)
 }
 
-func (iproxy *InterceptingProxy) setScopeQuery(query MessageQuery) (error) {
+func (iproxy *InterceptingProxy) setScopeQuery(query MessageQuery) error {
 	checker, err := CheckerFromMessageQuery(query)
 	if err != nil {
 		return err
@@ -244,7 +264,48 @@ func (iproxy *InterceptingProxy) setScopeQuery(query MessageQuery) (error) {
 	return nil
 }
 
-func (iproxy *InterceptingProxy) ClearScope() (error) {
+func (iproxy *InterceptingProxy) SetNetDial(dialer NetDialer) {
+	iproxy.mtx.Lock()
+	defer iproxy.mtx.Unlock()
+	iproxy.netDial = dialer
+}
+
+func (iproxy *InterceptingProxy) NetDial() NetDialer {
+	iproxy.mtx.Lock()
+	defer iproxy.mtx.Unlock()
+	return iproxy.netDial
+}
+
+func (iproxy *InterceptingProxy) ClearUpstreamProxy() {
+	iproxy.mtx.Lock()
+	defer iproxy.mtx.Unlock()
+	iproxy.usingProxy = false
+	iproxy.proxyHost = ""
+	iproxy.proxyPort = 0
+	iproxy.proxyIsSOCKS = false
+}
+
+func (iproxy *InterceptingProxy) SetUpstreamProxy(proxyHost string, proxyPort int, creds *ProxyCredentials) {
+	iproxy.mtx.Lock()
+	defer iproxy.mtx.Unlock()
+	iproxy.usingProxy = true
+	iproxy.proxyHost = proxyHost
+	iproxy.proxyPort = proxyPort
+	iproxy.proxyIsSOCKS = false
+	iproxy.proxyCreds = creds
+}
+
+func (iproxy *InterceptingProxy) SetUpstreamSOCKSProxy(proxyHost string, proxyPort int, creds *ProxyCredentials) {
+	iproxy.mtx.Lock()
+	defer iproxy.mtx.Unlock()
+	iproxy.usingProxy = true
+	iproxy.proxyHost = proxyHost
+	iproxy.proxyPort = proxyPort
+	iproxy.proxyIsSOCKS = true
+	iproxy.proxyCreds = creds
+}
+
+func (iproxy *InterceptingProxy) ClearScope() error {
 	iproxy.mtx.Lock()
 	defer iproxy.mtx.Unlock()
 	iproxy.scopeChecker = nil
@@ -262,12 +323,42 @@ func (iproxy *InterceptingProxy) ClearScope() (error) {
 	return nil
 }
 
-func (iproxy *InterceptingProxy) AddReqIntSub(f RequestInterceptor) (*ReqIntSub) {
+func (iproxy *InterceptingProxy) SubmitRequest(req *ProxyRequest) error {
+	oldDial := req.NetDial
+	defer func() { req.NetDial = oldDial }()
+	req.NetDial = iproxy.NetDial()
+
+	if iproxy.usingProxy {
+		if iproxy.proxyIsSOCKS {
+			return SubmitRequestSOCKSProxy(req, iproxy.proxyHost, iproxy.proxyPort, iproxy.proxyCreds)
+		} else {
+			return SubmitRequestProxy(req, iproxy.proxyHost, iproxy.proxyPort, iproxy.proxyCreds)
+		}
+	}
+	return SubmitRequest(req)
+}
+
+func (iproxy *InterceptingProxy) WSDial(req *ProxyRequest) (*WSSession, error) {
+	oldDial := req.NetDial
+	defer func() { req.NetDial = oldDial }()
+	req.NetDial = iproxy.NetDial()
+
+	if iproxy.usingProxy {
+		if iproxy.proxyIsSOCKS {
+			return WSDialSOCKSProxy(req, iproxy.proxyHost, iproxy.proxyPort, iproxy.proxyCreds)
+		} else {
+			return WSDialProxy(req, iproxy.proxyHost, iproxy.proxyPort, iproxy.proxyCreds)
+		}
+	}
+	return WSDial(req)
+}
+
+func (iproxy *InterceptingProxy) AddReqIntSub(f RequestInterceptor) *ReqIntSub {
 	iproxy.mtx.Lock()
 	defer iproxy.mtx.Unlock()
 
 	sub := &ReqIntSub{
-		id: getNextSubId(),
+		id:          getNextSubId(),
 		Interceptor: f,
 	}
 	iproxy.reqSubs = append(iproxy.reqSubs, sub)
@@ -286,12 +377,12 @@ func (iproxy *InterceptingProxy) RemoveReqIntSub(sub *ReqIntSub) {
 	}
 }
 
-func (iproxy *InterceptingProxy) AddRspIntSub(f ResponseInterceptor) (*RspIntSub) {
+func (iproxy *InterceptingProxy) AddRspIntSub(f ResponseInterceptor) *RspIntSub {
 	iproxy.mtx.Lock()
 	defer iproxy.mtx.Unlock()
 
 	sub := &RspIntSub{
-		id: getNextSubId(),
+		id:          getNextSubId(),
 		Interceptor: f,
 	}
 	iproxy.rspSubs = append(iproxy.rspSubs, sub)
@@ -310,12 +401,12 @@ func (iproxy *InterceptingProxy) RemoveRspIntSub(sub *RspIntSub) {
 	}
 }
 
-func (iproxy *InterceptingProxy) AddWSIntSub(f WSInterceptor) (*WSIntSub) {
+func (iproxy *InterceptingProxy) AddWSIntSub(f WSInterceptor) *WSIntSub {
 	iproxy.mtx.Lock()
 	defer iproxy.mtx.Unlock()
 
 	sub := &WSIntSub{
-		id: getNextSubId(),
+		id:          getNextSubId(),
 		Interceptor: f,
 	}
 	iproxy.wsSubs = append(iproxy.wsSubs, sub)
@@ -360,6 +451,28 @@ func (iproxy *InterceptingProxy) GetProxyStorage() MessageStorage {
 	return savedStorage.storage
 }
 
+func (iproxy *InterceptingProxy) AddHTTPHandler(host string, handler proxyWebUIHandler) {
+	iproxy.mtx.Lock()
+	defer iproxy.mtx.Unlock()
+	iproxy.httpHandlers[host] = handler
+}
+
+func (iproxy *InterceptingProxy) GetHTTPHandler(host string) (proxyWebUIHandler, error) {
+	iproxy.mtx.Lock()
+	defer iproxy.mtx.Unlock()
+	handler, ok := iproxy.httpHandlers[host]
+	if !ok {
+		return nil, fmt.Errorf("no handler for host %s", host)
+	}
+	return handler, nil
+}
+
+func (iproxy *InterceptingProxy) RemoveHTTPHandler(host string) {
+	iproxy.mtx.Lock()
+	defer iproxy.mtx.Unlock()
+	delete(iproxy.httpHandlers, host)
+}
+
 func ParseProxyRequest(r *http.Request) (*ProxyRequest, error) {
 	host, port, useTLS, err := DecodeRemoteAddr(r.RemoteAddr)
 	if err != nil {
@@ -382,14 +495,19 @@ func ErrResponse(w http.ResponseWriter, err error) {
 	http.Error(w, err.Error(), http.StatusInternalServerError)
 }
 
-func (p proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (iproxy *InterceptingProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	handler, err := iproxy.GetHTTPHandler(r.Host)
+	if err == nil {
+		handler(w, r, iproxy)
+		return
+	}
 
 	req, _ := ParseProxyRequest(r)
-	p.Logger.Println("Received request to", req.FullURL().String())
+	iproxy.logger.Println("Received request to", req.FullURL().String())
 	req.StripProxyHeaders()
 
-	ms := p.IProxy.GetProxyStorage()
-	scopeChecker := p.IProxy.GetScopeChecker()
+	ms := iproxy.GetProxyStorage()
+	scopeChecker := iproxy.GetScopeChecker()
 
 	// Helper functions
 	checkScope := func(req *ProxyRequest) bool {
@@ -409,16 +527,16 @@ func (p proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	/*
-	functions to mangle messages using the iproxy's manglers
-	each return the new message, whether it was modified, and an error
+		functions to mangle messages using the iproxy's manglers
+		each return the new message, whether it was modified, and an error
 	*/
 
 	mangleRequest := func(req *ProxyRequest) (*ProxyRequest, bool, error) {
 		newReq := req.Clone()
-		reqSubs := p.IProxy.getRequestSubs()
+		reqSubs := iproxy.getRequestSubs()
 		for _, sub := range reqSubs {
 			var err error = nil
-			newReq, err := sub.Interceptor(newReq)
+			newReq, err = sub.Interceptor(newReq)
 			if err != nil {
 				e := fmt.Errorf("error with request interceptor: %s", err)
 				return nil, false, e
@@ -431,7 +549,7 @@ func (p proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if newReq != nil {
 			newReq.StartDatetime = time.Now()
 			if !req.Eq(newReq) {
-				p.Logger.Println("Request modified by interceptor")
+				iproxy.logger.Println("Request modified by interceptor")
 				return newReq, true, nil
 			}
 		} else {
@@ -443,10 +561,10 @@ func (p proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	mangleResponse := func(req *ProxyRequest, rsp *ProxyResponse) (*ProxyResponse, bool, error) {
 		reqCopy := req.Clone()
 		newRsp := rsp.Clone()
-		rspSubs := p.IProxy.getResponseSubs()
-		p.Logger.Printf("%d interceptors", len(rspSubs))
+		rspSubs := iproxy.getResponseSubs()
+		iproxy.logger.Printf("%d interceptors", len(rspSubs))
 		for _, sub := range rspSubs {
-			p.Logger.Println("mangling rsp...")
+			iproxy.logger.Println("mangling rsp...")
 			var err error = nil
 			newRsp, err = sub.Interceptor(reqCopy, newRsp)
 			if err != nil {
@@ -460,7 +578,7 @@ func (p proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		if newRsp != nil {
 			if !rsp.Eq(newRsp) {
-				p.Logger.Println("Response for", req.FullURL(), "modified by interceptor")
+				iproxy.logger.Println("Response for", req.FullURL(), "modified by interceptor")
 				// it was mangled
 				return newRsp, true, nil
 			}
@@ -477,7 +595,7 @@ func (p proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		newMsg := ws.Clone()
 		reqCopy := req.Clone()
 		rspCopy := rsp.Clone()
-		wsSubs := p.IProxy.getWSSubs()
+		wsSubs := iproxy.getWSSubs()
 		for _, sub := range wsSubs {
 			var err error = nil
 			newMsg, err = sub.Interceptor(reqCopy, rspCopy, newMsg)
@@ -494,7 +612,7 @@ func (p proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if !ws.Eq(newMsg) {
 				newMsg.Timestamp = time.Now()
 				newMsg.Direction = ws.Direction
-				p.Logger.Println("Message modified by interceptor")
+				iproxy.logger.Println("Message modified by interceptor")
 				return newMsg, true, nil
 			}
 		} else {
@@ -502,7 +620,6 @@ func (p proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return ws, false, nil
 	}
-
 
 	req.StartDatetime = time.Now()
 
@@ -537,12 +654,12 @@ func (p proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.IsWSUpgrade() {
-		p.Logger.Println("Detected websocket request. Upgrading...")
+		iproxy.logger.Println("Detected websocket request. Upgrading...")
 
-		rc, err := req.WSDial()
+		rc, err := iproxy.WSDial(req)
 		if err != nil {
-			p.Logger.Println("error dialing ws server:", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			iproxy.logger.Println("error dialing ws server:", err)
+			http.Error(w, fmt.Sprintf("error dialing websocket server: %s", err.Error()), http.StatusInternalServerError)
 			return
 		}
 		defer rc.Close()
@@ -560,8 +677,8 @@ func (p proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		lc, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
-			p.Logger.Println("error upgrading connection:", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			iproxy.logger.Println("error upgrading connection:", err)
+			http.Error(w, fmt.Sprintf("error upgrading connection: %s", err.Error()), http.StatusInternalServerError)
 			return
 		}
 		defer lc.Close()
@@ -581,13 +698,13 @@ func (p proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				mtype, msg, err := rc.ReadMessage()
 				if err != nil {
 					lc.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-					p.Logger.Println("error with receiving server message:", err)
+					iproxy.logger.Println("error with receiving server message:", err)
 					wg.Done()
 					return
 				}
 				pws, err := NewProxyWSMessage(mtype, msg, ToClient)
 				if err != nil {
-					p.Logger.Println("error creating ws object:", err.Error())
+					iproxy.logger.Println("error creating ws object:", err.Error())
 					continue
 				}
 				pws.Timestamp = time.Now()
@@ -595,7 +712,7 @@ func (p proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				if checkScope(req) {
 					newMsg, mangled, err := mangleWS(req, req.ServerResponse, pws)
 					if err != nil {
-						p.Logger.Println("error mangling ws:", err)
+						iproxy.logger.Println("error mangling ws:", err)
 						return
 					}
 					if mangled {
@@ -611,7 +728,7 @@ func (p proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 				addWSMessage(req, pws)
 				if err := saveIfExists(req); err != nil {
-					p.Logger.Println("error saving request:", err)
+					iproxy.logger.Println("error saving request:", err)
 					continue
 				}
 				lc.WriteMessage(pws.Type, pws.Message)
@@ -625,13 +742,13 @@ func (p proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				mtype, msg, err := lc.ReadMessage()
 				if err != nil {
 					rc.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-					p.Logger.Println("error with receiving client message:", err)
+					iproxy.logger.Println("error with receiving client message:", err)
 					wg.Done()
 					return
 				}
 				pws, err := NewProxyWSMessage(mtype, msg, ToServer)
 				if err != nil {
-					p.Logger.Println("error creating ws object:", err.Error())
+					iproxy.logger.Println("error creating ws object:", err.Error())
 					continue
 				}
 				pws.Timestamp = time.Now()
@@ -639,7 +756,7 @@ func (p proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				if checkScope(req) {
 					newMsg, mangled, err := mangleWS(req, req.ServerResponse, pws)
 					if err != nil {
-						p.Logger.Println("error mangling ws:", err)
+						iproxy.logger.Println("error mangling ws:", err)
 						return
 					}
 					if mangled {
@@ -655,18 +772,18 @@ func (p proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 				addWSMessage(req, pws)
 				if err := saveIfExists(req); err != nil {
-					p.Logger.Println("error saving request:", err)
+					iproxy.logger.Println("error saving request:", err)
 					continue
 				}
 				rc.WriteMessage(pws.Type, pws.Message)
 			}
 		}()
 		wg.Wait()
-		p.Logger.Println("Websocket session complete!")
+		iproxy.logger.Println("Websocket session complete!")
 	} else {
-		err := req.Submit()
+		err := iproxy.SubmitRequest(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("error submitting request: %s", err.Error()), http.StatusInternalServerError)
 			return
 		}
 		req.EndDatetime = time.Now()
@@ -699,7 +816,7 @@ func (p proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		
+
 		for k, v := range req.ServerResponse.Header {
 			for _, vv := range v {
 				w.Header().Add(k, vv)
@@ -713,10 +830,7 @@ func (p proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func newProxyServer(logger *log.Logger, iproxy *InterceptingProxy) *http.Server {
 	server := &http.Server{
-		Handler: proxyHandler{
-			Logger: logger,
-			IProxy: iproxy,
-		},
+		Handler:  iproxy,
 		ErrorLog: logger,
 	}
 	return server

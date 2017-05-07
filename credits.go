@@ -5,22 +5,22 @@ List of info that is used to display credits
 */
 
 type creditItem struct {
-	projectName    string
-	url            string
-	author         string
-	year           string
-	licenseType    string
-	longCopyright  string
+	projectName   string
+	url           string
+	author        string
+	year          string
+	licenseType   string
+	longCopyright string
 }
 
-var LIB_CREDITS = []creditItem {
-	creditItem {
+var LIB_CREDITS = []creditItem{
+	creditItem{
 		"goproxy",
 		"https://github.com/elazarl/goproxy",
 		"Elazar Leibovich",
 		"2012",
 		"3-Clause BSD",
-`Copyright (c) 2012 Elazar Leibovich. All rights reserved.
+		`Copyright (c) 2012 Elazar Leibovich. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are
@@ -49,13 +49,13 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.`,
 	},
 
-	creditItem {
+	creditItem{
 		"golang-set",
 		"https://github.com/deckarep/golang-set",
 		"Ralph Caraveo",
 		"2013",
 		"MIT",
-`Open Source Initiative OSI - The MIT License (MIT):Licensing
+		`Open Source Initiative OSI - The MIT License (MIT):Licensing
 
 The MIT License (MIT)
 Copyright (c) 2013 Ralph Caraveo (deckarep@gmail.com)
@@ -79,13 +79,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.`,
 	},
 
-	creditItem {
+	creditItem{
 		"Gorilla WebSocket",
 		"https://github.com/gorilla/websocket",
 		"Gorilla WebSocket Authors",
 		"2013",
 		"2-Clause BSD",
-`Copyright (c) 2013 The Gorilla WebSocket Authors. All rights reserved.
+		`Copyright (c) 2013 The Gorilla WebSocket Authors. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:

@@ -4,10 +4,10 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"io"
 	"log"
 	"net"
+	"strings"
 )
 
 /*
@@ -18,8 +18,8 @@ type MessageHandler func([]byte, net.Conn, *log.Logger, *InterceptingProxy)
 
 type MessageListener struct {
 	handlers map[string]MessageHandler
-	iproxy *InterceptingProxy
-	Logger *log.Logger
+	iproxy   *InterceptingProxy
+	Logger   *log.Logger
 }
 
 type commandData struct {
@@ -28,14 +28,14 @@ type commandData struct {
 
 type errorMessage struct {
 	Success bool
-	Reason string
+	Reason  string
 }
 
 func NewMessageListener(l *log.Logger, iproxy *InterceptingProxy) *MessageListener {
 	m := &MessageListener{
 		handlers: make(map[string]MessageHandler),
-		iproxy: iproxy,
-		Logger: l,
+		iproxy:   iproxy,
+		Logger:   l,
 	}
 	return m
 }

@@ -85,17 +85,23 @@ class SockBuffer:
 
 class Headers:
     def __init__(self, headers=None):
-        if headers is None:
-            self.headers = {}
-        else:
-            self.headers = headers
+        self.headers = {}
+        if headers is not None:
+            if isinstance(headers, Headers):
+                for _, pairs in headers.headers.items():
+                    for k, v in pairs:
+                        self.add(k, v)
+            else:
+                for k, vs in headers.items():
+                    for v in vs:
+                        self.add(k, v)
         
     def __contains__(self, hd):
         for k, _ in self.headers.items():
             if k.lower() == hd.lower():
                 return True
         return False
-        
+
     def add(self, k, v):
         try:
             l = self.headers[k.lower()]
@@ -265,11 +271,7 @@ class HTTPRequest:
         self.proto_major = proto_major
         self.proto_minor = proto_minor
 
-        self.headers = Headers()
-        if headers is not None:
-            for k, vs in headers.items():
-                for v in vs:
-                    self.headers.add(k, v)
+        self.headers = Headers(headers)
         
         self.headers_only = headers_only
         self._body = bytes()
@@ -280,8 +282,8 @@ class HTTPRequest:
         self.dest_host = dest_host
         self.dest_port = dest_port
         self.use_tls = use_tls
-        self.time_start = time_start or datetime.datetime(1970, 1, 1)
-        self.time_end = time_end or datetime.datetime(1970, 1, 1)
+        self.time_start = time_start
+        self.time_end = time_end
         
         self.response = None
         self.unmangled = None
@@ -412,7 +414,7 @@ class HTTPRequest:
             path=self.url.geturl(),
             proto_major=self.proto_major,
             proto_minor=self.proto_minor,
-            headers=self.headers.headers,
+            headers=self.headers,
             body=self.body,
             dest_host=self.dest_host,
             dest_port=self.dest_port,
@@ -928,6 +930,21 @@ class ProxyConnection:
         for ss in result["Storages"]:
             ret.append(SavedStorage(ss["Id"], ss["Description"]))
         return ret
+
+    @messagingFunction
+    def set_proxy(self, use_proxy=False, proxy_host="", proxy_port=0, use_creds=False,
+            username="", password="", is_socks=False):
+        cmd = {
+            "Command": "SetProxy",
+            "UseProxy": use_proxy,
+            "ProxyHost": proxy_host,
+            "ProxyPort": proxy_port,
+            "ProxyIsSOCKS": is_socks,
+            "UseCredentials": use_creds,
+            "Username": username,
+            "Password": password,
+        }
+        self.reqrsp_cmd(cmd)
         
     @messagingFunction
     def intercept(self, macro):
@@ -1086,6 +1103,7 @@ class ProxyClient:
             # "add_in_memory_storage",
             # "close_storage",
             # "set_proxy_storage",
+            "set_proxy"
         }
         
     def __enter__(self):
@@ -1162,7 +1180,7 @@ class ProxyClient:
             stype, prefix = s.description.split("|")
             storage = ActiveStorage(stype, s.storage_id, prefix)
             self._add_storage(storage, prefix)
-        
+    
     def parse_reqid(self, reqid):
         if reqid[0].isalpha():
             prefix = reqid[0]
@@ -1172,6 +1190,10 @@ class ProxyClient:
             realid = reqid
         storage = self.storage_by_prefix[prefix]
         return storage, realid
+
+    def get_reqid(self, req):
+        storage = self.storage_by_id[req.storage_id]
+        return storage.prefix + req.db_id
         
     def storage_iter(self):
         for _, s in self.storage_by_id.items():
@@ -1190,6 +1212,17 @@ class ProxyClient:
         if max_results > 0 and len(results) > max_results:
             ret = results[:max_results]
         return ret
+
+    def in_context_requests_iter(self, headers_only=False, max_results=0):
+        results = self.query_storage(self.context.query,
+                                     headers_only=headers_only,
+                                     max_results=max_results)
+        ret = results
+        if max_results > 0 and len(results) > max_results:
+            ret = results[:max_results]
+        for reqh in ret:
+            req = self.req_by_id(reqh.db_id, storage_id=reqh.storage_id)
+            yield req
     
     def prefixed_reqid(self, req):
         prefix = ""
@@ -1246,10 +1279,14 @@ class ProxyClient:
         results = [r for r in reversed(results)]
         return results
             
-    def req_by_id(self, reqid, headers_only=False):
-        storage, rid = self.parse_reqid(reqid)
-        return self.msg_conn.req_by_id(rid, headers_only=headers_only,
-                                       storage=storage.storage_id)
+    def req_by_id(self, reqid, storage_id=None, headers_only=False):
+        if storage_id is None:
+            storage, db_id = self.parse_reqid(reqid)
+            storage_id = storage.storage_id
+        else:
+            db_id = reqid
+        return self.msg_conn.req_by_id(db_id, headers_only=headers_only,
+                                       storage=storage_id)
 
     # for these and submit, might need storage stored on the request itself
     def add_tag(self, reqid, tag, storage=None):
@@ -1275,12 +1312,12 @@ class ProxyClient:
 
 
 def decode_req(result, headers_only=False):
-    if "StartTime" in result:
+    if "StartTime" in result and result["StartTime"] > 0:
         time_start = time_from_nsecs(result["StartTime"])
     else:
         time_start = None
 
-    if "EndTime" in result:
+    if "EndTime" in result and result["EndTime"] > 0:
         time_end = time_from_nsecs(result["EndTime"])
     else:
         time_end = None

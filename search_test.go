@@ -8,7 +8,9 @@ import (
 
 func checkSearch(t *testing.T, req *ProxyRequest, expected bool, args ...interface{}) {
 	checker, err := NewRequestChecker(args...)
-	if err != nil { t.Error(err.Error()) }
+	if err != nil {
+		t.Error(err.Error())
+	}
 	result := checker(req)
 	if result != expected {
 		_, f, ln, _ := runtime.Caller(1)
@@ -18,9 +20,13 @@ func checkSearch(t *testing.T, req *ProxyRequest, expected bool, args ...interfa
 
 func TestAllSearch(t *testing.T) {
 	checker, err := NewRequestChecker(FieldAll, StrContains, "foo")
-	if err != nil { t.Error(err.Error()) }
+	if err != nil {
+		t.Error(err.Error())
+	}
 	req := testReq()
-	if !checker(req) { t.Error("Failed to match FieldAll, StrContains") }
+	if !checker(req) {
+		t.Error("Failed to match FieldAll, StrContains")
+	}
 }
 
 func TestBodySearch(t *testing.T) {

@@ -1524,7 +1524,7 @@ def update_buffers(req):
 
     # Save the port, ssl, host setting
     vim.command("let s:dest_port=%d" % req.dest_port)
-    vim.command("let s:dest_host='%s'" % req.dest_host)
+    vim.command("let s:dest_host='%s'" % escape(req.dest_host))
 
     if req.use_tls:
         vim.command("let s:use_tls=1")
@@ -1544,6 +1544,8 @@ def set_up_windows():
     reqid = vim.eval("a:2")
     storage_id = vim.eval("a:3")
     msg_addr = vim.eval("a:4")
+
+    vim.command("let s:storage_id=%d" % int(storage_id))
     
     # Get the left buffer
     vim.command("new")
@@ -1568,11 +1570,12 @@ def dest_loc():
     dest_host = vim.eval("s:dest_host")
     dest_port = int(vim.eval("s:dest_port"))
     tls_num = vim.eval("s:use_tls")
+    storage_id = int(vim.eval("s:storage_id"))
     if tls_num == "1":
         use_tls = True
     else:
         use_tls = False
-    return (dest_host, dest_port, use_tls)
+    return (dest_host, dest_port, use_tls, storage_id)
 
 def submit_current_buffer():
     curbuf = vim.current.buffer
@@ -1586,14 +1589,15 @@ def submit_current_buffer():
     full_request = '\n'.join(curbuf)
 
     req = parse_request(full_request)
-    dest_host, dest_port, use_tls = dest_loc()
+    dest_host, dest_port, use_tls, storage_id = dest_loc()
     req.dest_host = dest_host
     req.dest_port = dest_port
     req.use_tls = use_tls
 
     comm_type, comm_addr = get_conn_addr()
     with ProxyConnection(kind=comm_type, addr=comm_addr) as conn:
-        new_req = conn.submit(req)
+        new_req = conn.submit(req, storage=storage_id)
+        conn.add_tag(new_req.db_id, "repeater", storage_id)
         update_buffers(new_req)
     
 # (left, right) = set_up_windows()

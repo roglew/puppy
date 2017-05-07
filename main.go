@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
-	"strings"
-	"syscall"
-	"os/signal"
 	"net"
 	"os"
+	"os/signal"
+	"strings"
+	"syscall"
 	"time"
 )
 
@@ -101,7 +101,7 @@ func main() {
 	flag.Parse()
 
 	if *debugFlag {
-		logfile, err := os.OpenFile("log.log", os.O_RDWR | os.O_CREATE | os.O_APPEND, 0666)
+		logfile, err := os.OpenFile("log.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 		checkErr(err)
 		logger = log.New(logfile, "[*] ", log.Lshortfile)
 	} else {
@@ -151,28 +151,9 @@ func main() {
 		}
 	}
 
-	// Set up storage
-	// if *storageFname == "" && *inMemStorage == false {
-	// 	quitErr("storage file or -inmem flag required")
-	// }
-	// if *storageFname != "" && *inMemStorage == true {
-	// 	quitErr("cannot provide both a storage file and -inmem flag")
-	// }
-	// var storage MessageStorage
-	// if *inMemStorage {
-	// 	var err error
-	// 	storage, err = InMemoryStorage(logger)
-	// 	checkErr(err)
-	// } else {
-	// 	var err error
-	// 	storage, err = OpenSQLiteStorage(*storageFname, logger)
-	// 	checkErr(err)
-	// }
-
 	// Set up the intercepting proxy
 	iproxy := NewInterceptingProxy(logger)
-	// sid := iproxy.AddMessageStorage(storage)
-	// iproxy.SetProxyStorage(sid)
+	iproxy.AddHTTPHandler("puppy", WebUIHandler)
 
 	// Create a message server and have it serve for the iproxy
 	mserv := NewProxyMessageListener(logger, iproxy)

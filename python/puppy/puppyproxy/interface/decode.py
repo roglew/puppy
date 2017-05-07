@@ -7,31 +7,32 @@ import string
 import urllib
 
 from ..util import hexdump, printable_data, copy_to_clipboard, clipboard_contents, encode_basic_auth, parse_basic_auth
+from ..console import CommandError
 from io import StringIO
 
 def print_maybe_bin(s):
     binary = False
     for c in s:
-        if str(c) not in string.printable:
+        if chr(c) not in string.printable:
             binary = True
             break
     if binary:
         print(hexdump(s))
     else:
-        print(s)
+        print(s.decode())
         
 def asciihex_encode_helper(s):
-    return ''.join('{0:x}'.format(c) for c in s)
+    return ''.join('{0:x}'.format(c) for c in s).encode()
 
 def asciihex_decode_helper(s):
     ret = []
     try:
         for a, b in zip(s[0::2], s[1::2]):
-            c = a+b
+            c = chr(a)+chr(b)
             ret.append(chr(int(c, 16)))
-        return ''.join(ret)
+        return ''.join(ret).encode()
     except Exception as e:
-        raise PappyException(e)
+        raise CommandError(e)
     
 def gzip_encode_helper(s):
     out = StringIO.StringIO()
@@ -54,13 +55,21 @@ def base64_decode_helper(s):
                 return s_padded
             except:
                 pass
-        raise PappyException("Unable to base64 decode string")
+        raise CommandError("Unable to base64 decode string")
+    
+def url_decode_helper(s):
+    bs = s.decode()
+    return urllib.parse.unquote(bs).encode()
+
+def url_encode_helper(s):
+    bs = s.decode()
+    return urllib.parse.quote_plus(bs).encode()
 
 def html_encode_helper(s):
-    return ''.join(['&#x{0:x};'.format(c) for c in s])
+    return ''.join(['&#x{0:x};'.format(c) for c in s]).encode()
 
 def html_decode_helper(s):
-    return html.unescape(s)
+    return html.unescape(s.decode()).encode()
 
 def _code_helper(args, func, copy=True):
     if len(args) == 0:
@@ -107,7 +116,7 @@ def url_decode(client, args):
     If no string is given, will decode the contents of the clipboard.
     Results are copied to the clipboard.
     """
-    print_maybe_bin(_code_helper(args, urllib.unquote))
+    print_maybe_bin(_code_helper(args, url_decode_helper))
 
 def url_encode(client, args):
     """
@@ -115,7 +124,7 @@ def url_encode(client, args):
     If no string is given, will encode the contents of the clipboard.
     Results are copied to the clipboard.
     """
-    print_maybe_bin(_code_helper(args, urllib.quote_plus))
+    print_maybe_bin(_code_helper(args, url_encode_helper))
 
 def asciihex_decode(client, args):
     """
@@ -187,7 +196,7 @@ def url_decode_raw(client, args):
     results will not be copied. It is suggested you redirect the output
     to a file.
     """
-    print(_code_helper(args, urllib.unquote, copy=False))
+    print(_code_helper(args, url_decode_helper, copy=False))
 
 def url_encode_raw(client, args):
     """
@@ -195,7 +204,7 @@ def url_encode_raw(client, args):
     results will not be copied. It is suggested you redirect the output
     to a file.
     """
-    print(_code_helper(args, urllib.quote_plus, copy=False))
+    print(_code_helper(args, url_encode_helper, copy=False))
 
 def asciihex_decode_raw(client, args):
     """
@@ -254,9 +263,8 @@ def unix_time_decode(client, args):
     print(_code_helper(args, unix_time_decode_helper))
     
 def http_auth_encode(client, args):
-    args = shlex.split(args[0])
     if len(args) != 2:
-        raise PappyException('Usage: http_auth_encode <username> <password>')
+        raise CommandError('Usage: http_auth_encode <username> <password>')
     username, password = args
     print(encode_basic_auth(username, password))
 

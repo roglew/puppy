@@ -1,6 +1,6 @@
 from itertools import groupby
 
-from ..proxy import InvalidQuery
+from ..proxy import InvalidQuery, time_to_nsecs
 from ..colors import Colors, Styles
 
 # class BuiltinFilters(object):
@@ -71,6 +71,11 @@ def filtercmd(client, args):
     """
     try:
         phrases = [list(group) for k, group in groupby(args, lambda x: x == "OR") if not k]
+        for phrase in phrases:
+            # we do before/after by id not by timestamp
+            if phrase[0] in ('before', 'b4', 'after', 'af') and len(phrase) > 1:
+                r = client.req_by_id(phrase[1], headers_only=True)
+                phrase[1] = str(time_to_nsecs(r.time_start))
         client.context.apply_phrase(phrases)
     except InvalidQuery as e:
         print(e)

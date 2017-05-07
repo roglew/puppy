@@ -1,9 +1,9 @@
 package main
 
 import (
-	"crypto/tls"
 	"bufio"
 	"bytes"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -52,53 +52,54 @@ func NewProxyMessageListener(logger *log.Logger, iproxy *InterceptingProxy) *Mes
 	l.AddHandler("closestorage", closeStorageHandler)
 	l.AddHandler("setproxystorage", setProxyStorageHandler)
 	l.AddHandler("liststorage", listProxyStorageHandler)
+	l.AddHandler("setproxy", setProxyHandler)
 
 	return l
 }
 
 // Message input structs
 type RequestJSON struct {
-	DestHost string
-	DestPort int
-	UseTLS bool
-	Method string
-	Path string
+	DestHost   string
+	DestPort   int
+	UseTLS     bool
+	Method     string
+	Path       string
 	ProtoMajor int
 	ProtoMinor int
-	Headers map[string][]string
-	Body string
-	Tags []string
+	Headers    map[string][]string
+	Body       string
+	Tags       []string
 
 	StartTime int64 `json:"StartTime,omitempty"`
-	EndTime int64 `json:"EndTime,omitempty"`
+	EndTime   int64 `json:"EndTime,omitempty"`
 
-	Unmangled *RequestJSON `json:"Unmangled,omitempty"`
-	Response *ResponseJSON `json:"Response,omitempty"`
+	Unmangled  *RequestJSON     `json:"Unmangled,omitempty"`
+	Response   *ResponseJSON    `json:"Response,omitempty"`
 	WSMessages []*WSMessageJSON `json:"WSMessages,omitempty"`
-	DbId string `json:"DbId,omitempty"`
+	DbId       string           `json:"DbId,omitempty"`
 }
 
 type ResponseJSON struct {
 	ProtoMajor int
 	ProtoMinor int
 	StatusCode int
-	Reason string
-	
+	Reason     string
+
 	Headers map[string][]string
-	Body string
+	Body    string
 
 	Unmangled *ResponseJSON `json:"Unmangled,omitempty"`
-	DbId string
+	DbId      string
 }
 
 type WSMessageJSON struct {
-	Message string
-	IsBinary bool
-	ToServer bool
+	Message   string
+	IsBinary  bool
+	ToServer  bool
 	Timestamp int64
 
 	Unmangled *WSMessageJSON `json:"Unmangled,omitempty"`
-	DbId string
+	DbId      string
 }
 
 func (reqd *RequestJSON) Validate() error {
@@ -162,7 +163,7 @@ func (reqd *RequestJSON) Parse() (*ProxyRequest, error) {
 		req.EndDatetime = time.Unix(0, reqd.EndTime)
 	}
 
-	for _, tag := range(reqd.Tags) {
+	for _, tag := range reqd.Tags {
 		req.AddTag(tag)
 	}
 
@@ -186,7 +187,7 @@ func (reqd *RequestJSON) Parse() (*ProxyRequest, error) {
 	return req, nil
 }
 
-func NewRequestJSON(req *ProxyRequest, headersOnly bool) (*RequestJSON) {
+func NewRequestJSON(req *ProxyRequest, headersOnly bool) *RequestJSON {
 
 	newHeaders := make(map[string][]string)
 	for k, vs := range req.Header {
@@ -217,23 +218,23 @@ func NewRequestJSON(req *ProxyRequest, headersOnly bool) (*RequestJSON) {
 	}
 
 	ret := &RequestJSON{
-		DestHost: req.DestHost,
-		DestPort: req.DestPort,
-		UseTLS: req.DestUseTLS,
-		Method: req.Method,
-		Path: req.HTTPPath(),
+		DestHost:   req.DestHost,
+		DestPort:   req.DestPort,
+		UseTLS:     req.DestUseTLS,
+		Method:     req.Method,
+		Path:       req.HTTPPath(),
 		ProtoMajor: req.ProtoMajor,
 		ProtoMinor: req.ProtoMinor,
-		Headers: newHeaders,
-		Tags: req.Tags(),
+		Headers:    newHeaders,
+		Tags:       req.Tags(),
 
 		StartTime: req.StartDatetime.UnixNano(),
-		EndTime: req.EndDatetime.UnixNano(),
+		EndTime:   req.EndDatetime.UnixNano(),
 
-		Unmangled: unmangled,
-		Response: rsp,
+		Unmangled:  unmangled,
+		Response:   rsp,
 		WSMessages: wsms,
-		DbId: req.DbId,
+		DbId:       req.DbId,
 	}
 	if !headersOnly {
 		ret.Body = base64.StdEncoding.EncodeToString(req.BodyBytes())
@@ -294,7 +295,7 @@ func (rspd *ResponseJSON) Parse() (*ProxyResponse, error) {
 	return rsp, nil
 }
 
-func NewResponseJSON(rsp *ProxyResponse, headersOnly bool) (*ResponseJSON) {
+func NewResponseJSON(rsp *ProxyResponse, headersOnly bool) *ResponseJSON {
 	newHeaders := make(map[string][]string)
 	for k, vs := range rsp.Header {
 		for _, v := range vs {
@@ -317,10 +318,10 @@ func NewResponseJSON(rsp *ProxyResponse, headersOnly bool) (*ResponseJSON) {
 		ProtoMajor: rsp.ProtoMajor,
 		ProtoMinor: rsp.ProtoMinor,
 		StatusCode: rsp.StatusCode,
-		Reason: rsp.HTTPStatus(),
-		Headers: newHeaders,
-		DbId: rsp.DbId,
-		Unmangled: unmangled,
+		Reason:     rsp.HTTPStatus(),
+		Headers:    newHeaders,
+		DbId:       rsp.DbId,
+		Unmangled:  unmangled,
 	}
 
 	if !headersOnly {
@@ -359,23 +360,23 @@ func (wsmd *WSMessageJSON) Parse() (*ProxyWSMessage, error) {
 	}
 
 	retData := &ProxyWSMessage{
-		Message: message,
-		Type: mtype,
+		Message:   message,
+		Type:      mtype,
 		Direction: Direction,
 		Timestamp: time.Unix(0, wsmd.Timestamp),
 		Unmangled: unmangled,
-		DbId: wsmd.DbId,
+		DbId:      wsmd.DbId,
 	}
 
 	return retData, nil
 }
 
-func NewWSMessageJSON(wsm *ProxyWSMessage) (*WSMessageJSON) {
+func NewWSMessageJSON(wsm *ProxyWSMessage) *WSMessageJSON {
 	isBinary := false
 	if wsm.Type == websocket.BinaryMessage {
 		isBinary = true
 	}
-	
+
 	toServer := false
 	if wsm.Direction == ToServer {
 		toServer = true
@@ -387,12 +388,12 @@ func NewWSMessageJSON(wsm *ProxyWSMessage) (*WSMessageJSON) {
 	}
 
 	ret := &WSMessageJSON{
-		Message: base64.StdEncoding.EncodeToString(wsm.Message),
-		IsBinary: isBinary,
-		ToServer: toServer,
+		Message:   base64.StdEncoding.EncodeToString(wsm.Message),
+		IsBinary:  isBinary,
+		ToServer:  toServer,
 		Timestamp: wsm.Timestamp.UnixNano(),
 		Unmangled: unmangled,
-		DbId: wsm.DbId,
+		DbId:      wsm.DbId,
 	}
 
 	return ret
@@ -427,11 +428,11 @@ type successResult struct {
 /*
 Ping
 */
-type pingMessage struct {}
+type pingMessage struct{}
 
 type pingResponse struct {
 	Success bool
-	Ping string
+	Ping    string
 }
 
 func pingHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *InterceptingProxy) {
@@ -448,7 +449,7 @@ type submitMessage struct {
 }
 
 type submitResponse struct {
-	Success bool
+	Success          bool
 	SubmittedRequest *RequestJSON
 }
 
@@ -475,8 +476,8 @@ func submitHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Interceptin
 		}
 		SaveNewRequest(storage, req)
 	}
-	logger.Println("Submitting request to", req.FullURL(),"...")
-	if err := req.Submit(); err != nil {
+	logger.Println("Submitting request to", req.FullURL(), "...")
+	if err := iproxy.SubmitRequest(req); err != nil {
 		ErrorResponse(c, err.Error())
 		return
 	}
@@ -504,7 +505,7 @@ type saveNewMessage struct {
 
 type saveNewResponse struct {
 	Success bool
-	DbId string
+	DbId    string
 }
 
 func saveNewHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *InterceptingProxy) {
@@ -540,7 +541,7 @@ func saveNewHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Intercepti
 
 	response := &saveNewResponse{
 		Success: true,
-		DbId: req.DbId,
+		DbId:    req.DbId,
 	}
 	MessageResponse(c, response)
 }
@@ -549,10 +550,10 @@ func saveNewHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Intercepti
 QueryRequests
 */
 type storageQueryMessage struct {
-	Query StrMessageQuery
+	Query       StrMessageQuery
 	HeadersOnly bool
-	MaxResults int64
-	Storage int
+	MaxResults  int64
+	Storage     int
 }
 
 type storageQueryResult struct {
@@ -562,9 +563,9 @@ type storageQueryResult struct {
 
 func storageQueryHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *InterceptingProxy) {
 	mreq := storageQueryMessage{
-		Query: nil,
+		Query:       nil,
 		HeadersOnly: false,
-		MaxResults: 0,
+		MaxResults:  0,
 	}
 
 	if err := json.Unmarshal(b, &mreq); err != nil {
@@ -658,9 +659,8 @@ func validateQueryHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Inte
 		ErrorResponse(c, err.Error())
 		return
 	}
-	MessageResponse(c, &successResult{Success:true})
+	MessageResponse(c, &successResult{Success: true})
 }
-
 
 /*
 SetScope
@@ -672,7 +672,7 @@ type setScopeMessage struct {
 
 func setScopeHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *InterceptingProxy) {
 	mreq := setScopeMessage{}
-	
+
 	if err := json.Unmarshal(b, &mreq); err != nil {
 		ErrorResponse(c, "error parsing query message")
 		return
@@ -690,7 +690,7 @@ func setScopeHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Intercept
 		return
 	}
 
-	MessageResponse(c, &successResult{Success:true})
+	MessageResponse(c, &successResult{Success: true})
 }
 
 /*
@@ -701,9 +701,9 @@ type viewScopeMessage struct {
 }
 
 type viewScopeResult struct {
-	Success bool
+	Success  bool
 	IsCustom bool
-	Query StrMessageQuery
+	Query    StrMessageQuery
 }
 
 func viewScopeHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *InterceptingProxy) {
@@ -712,7 +712,7 @@ func viewScopeHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Intercep
 
 	if scopeQuery == nil && scopeChecker != nil {
 		MessageResponse(c, &viewScopeResult{
-			Success: true,
+			Success:  true,
 			IsCustom: true,
 		})
 		return
@@ -726,9 +726,9 @@ func viewScopeHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Intercep
 	}
 
 	MessageResponse(c, &viewScopeResult{
-		Success: true,
+		Success:  true,
 		IsCustom: false,
-		Query: strQuery,
+		Query:    strQuery,
 	})
 }
 
@@ -737,8 +737,8 @@ Tag messages
 */
 
 type addTagMessage struct {
-	ReqId string
-	Tag string
+	ReqId   string
+	Tag     string
 	Storage int
 }
 
@@ -765,7 +765,7 @@ func addTagHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Interceptin
 		ErrorResponse(c, "both request id and tag are required")
 		return
 	}
-	
+
 	req, err := storage.LoadRequest(mreq.ReqId)
 	if err != nil {
 		ErrorResponse(c, fmt.Sprintf("error loading request: %s", err.Error()))
@@ -779,12 +779,12 @@ func addTagHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Interceptin
 		return
 	}
 
-	MessageResponse(c, &successResult{Success:true})
+	MessageResponse(c, &successResult{Success: true})
 }
 
 type removeTagMessage struct {
-	ReqId string
-	Tag string
+	ReqId   string
+	Tag     string
 	Storage int
 }
 
@@ -811,7 +811,7 @@ func removeTagHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Intercep
 		ErrorResponse(c, "both request id and tag are required")
 		return
 	}
-	
+
 	req, err := storage.LoadRequest(mreq.ReqId)
 	if err != nil {
 		ErrorResponse(c, fmt.Sprintf("error loading request: %s", err.Error()))
@@ -825,11 +825,11 @@ func removeTagHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Intercep
 		return
 	}
 
-	MessageResponse(c, &successResult{Success:true})
+	MessageResponse(c, &successResult{Success: true})
 }
 
 type clearTagsMessage struct {
-	ReqId string
+	ReqId   string
 	Storage int
 }
 
@@ -866,7 +866,7 @@ func clearTagHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Intercept
 		return
 	}
 
-	MessageResponse(c, &successResult{Success:true})
+	MessageResponse(c, &successResult{Success: true})
 }
 
 /*
@@ -874,12 +874,12 @@ Intercept
 */
 
 type interceptMessage struct {
-	InterceptRequests bool
+	InterceptRequests  bool
 	InterceptResponses bool
-	InterceptWS bool
+	InterceptWS        bool
 
 	UseQuery bool
-	Query MessageQuery
+	Query    MessageQuery
 }
 
 type intHandshakeResult struct {
@@ -891,49 +891,49 @@ var getNextIntId = IdCounter()
 
 type intRequest struct {
 	// A request to have a message mangled
-	Id int
-	Type string
+	Id      int
+	Type    string
 	Success bool
-	Result chan *intResponse `json:"-"`
-	
-	Request *RequestJSON `json:"Request,omitempty"`
-	Response *ResponseJSON `json:"Response,omitempty"`
+	Result  chan *intResponse `json:"-"`
+
+	Request   *RequestJSON   `json:"Request,omitempty"`
+	Response  *ResponseJSON  `json:"Response,omitempty"`
 	WSMessage *WSMessageJSON `json:"WSMessage,omitempty"`
 }
 
 type intResponse struct {
 	// response from the client with a mangled http request
-	Id int
+	Id      int
 	Dropped bool
 
-	Request *RequestJSON `json:"Request,omitempty"`
-	Response *ResponseJSON `json:"Response,omitempty"`
+	Request   *RequestJSON   `json:"Request,omitempty"`
+	Response  *ResponseJSON  `json:"Response,omitempty"`
 	WSMessage *WSMessageJSON `json:"WSMessage,omitempty"`
 }
 
 type intErrorMessage struct {
 	// a message template for sending an error to client if there is an error
 	// with the mangled message they sent
-	Id int
+	Id      int
 	Success bool
-	Reason string
+	Reason  string
 }
 
 func intErrorResponse(id int, conn net.Conn, reason string) {
 	m := &intErrorMessage{
-		Id: id,
+		Id:      id,
 		Success: false,
-		Reason: reason,
+		Reason:  reason,
 	}
 	MessageResponse(conn, m)
 }
 
 func interceptHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *InterceptingProxy) {
 	mreq := interceptMessage{
-		InterceptRequests: false,
+		InterceptRequests:  false,
 		InterceptResponses: false,
-		InterceptWS: false,
-		UseQuery: false,
+		InterceptWS:        false,
+		UseQuery:           false,
 	}
 
 	if err := json.Unmarshal(b, &mreq); err != nil {
@@ -1002,9 +1002,9 @@ func interceptHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Intercep
 
 			// convert request data to an intRequest
 			intReq := &intRequest{
-				Id: getNextIntId(),
-				Type: "httprequest",
-				Result: make(chan *intResponse),
+				Id:      getNextIntId(),
+				Type:    "httprequest",
+				Result:  make(chan *intResponse),
 				Success: true,
 
 				Request: reqData,
@@ -1054,17 +1054,17 @@ func interceptHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Intercep
 
 			reqData := NewRequestJSON(req, false)
 			CleanReqJSON(reqData)
-			
+
 			rspData := NewResponseJSON(rsp, false)
 			CleanRspJSON(rspData)
 
 			intReq := &intRequest{
-				Id: getNextIntId(),
-				Type: "httpresponse",
-				Result: make(chan *intResponse),
+				Id:      getNextIntId(),
+				Type:    "httpresponse",
+				Result:  make(chan *intResponse),
 				Success: true,
 
-				Request: reqData,
+				Request:  reqData,
 				Response: rspData,
 			}
 
@@ -1120,19 +1120,18 @@ func interceptHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Intercep
 
 			reqData := NewRequestJSON(req, false)
 			CleanReqJSON(reqData)
-			
+
 			rspData := NewResponseJSON(rsp, false)
 			CleanRspJSON(rspData)
 
-
 			intReq := &intRequest{
-				Id: getNextIntId(),
-				Type: msgType,
-				Result: make(chan *intResponse),
+				Id:      getNextIntId(),
+				Type:    msgType,
+				Result:  make(chan *intResponse),
 				Success: true,
 
-				Request: reqData,
-				Response: rspData,
+				Request:   reqData,
+				Response:  rspData,
 				WSMessage: wsData,
 			}
 
@@ -1296,7 +1295,7 @@ func allSavedQueriesHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *In
 	savedQueries := make([]*StrSavedQuery, 0)
 	for _, q := range goQueries {
 		strSavedQuery := &StrSavedQuery{
-			Name: q.Name,
+			Name:  q.Name,
 			Query: nil,
 		}
 		sq, err := GoQueryToStrQuery(q.Query)
@@ -1312,14 +1311,14 @@ func allSavedQueriesHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *In
 }
 
 type saveQueryMessage struct {
-	Name string
-	Query StrMessageQuery
+	Name    string
+	Query   StrMessageQuery
 	Storage int
 }
 
 func saveQueryHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *InterceptingProxy) {
 	mreq := saveQueryMessage{}
-	
+
 	if err := json.Unmarshal(b, &mreq); err != nil {
 		ErrorResponse(c, "error parsing message")
 		return
@@ -1358,17 +1357,17 @@ func saveQueryHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Intercep
 		return
 	}
 
-	MessageResponse(c, &successResult{Success:true})
+	MessageResponse(c, &successResult{Success: true})
 }
 
 type loadQueryMessage struct {
-	Name string
+	Name    string
 	Storage int
 }
 
 type loadQueryResult struct {
 	Success bool
-	Query StrMessageQuery
+	Query   StrMessageQuery
 }
 
 func loadQueryHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *InterceptingProxy) {
@@ -1408,14 +1407,14 @@ func loadQueryHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Intercep
 
 	result := &loadQueryResult{
 		Success: true,
-		Query: strQuery,
+		Query:   strQuery,
 	}
 
 	MessageResponse(c, result)
 }
 
 type deleteQueryMessage struct {
-	Name string
+	Name    string
 	Storage int
 }
 
@@ -1442,7 +1441,7 @@ func deleteQueryHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Interc
 		ErrorResponse(c, err.Error())
 		return
 	}
-	MessageResponse(c, &successResult{Success:true})
+	MessageResponse(c, &successResult{Success: true})
 }
 
 /*
@@ -1450,10 +1449,10 @@ Listener management
 */
 
 type activeListener struct {
-	Id int
+	Id       int
 	Listener net.Listener `json:"-"`
-	Type string
-	Addr string
+	Type     string
+	Addr     string
 }
 
 type addListenerMessage struct {
@@ -1463,7 +1462,7 @@ type addListenerMessage struct {
 
 type addListenerResult struct {
 	Success bool
-	Id int
+	Id      int
 }
 
 var getNextMsgListenerId = IdCounter()
@@ -1500,10 +1499,10 @@ func addListenerHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Interc
 	iproxy.AddListener(listener)
 
 	alistener := &activeListener{
-		Id: getNextMsgListenerId(),
+		Id:       getNextMsgListenerId(),
 		Listener: listener,
-		Type: mreq.Type,
-		Addr: mreq.Addr,
+		Type:     mreq.Type,
+		Addr:     mreq.Addr,
 	}
 
 	msgActiveListenersMtx.Lock()
@@ -1511,7 +1510,7 @@ func addListenerHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Interc
 	msgActiveListeners[alistener.Id] = alistener
 	result := &addListenerResult{
 		Success: true,
-		Id: alistener.Id,
+		Id:      alistener.Id,
 	}
 
 	MessageResponse(c, result)
@@ -1538,11 +1537,10 @@ func removeListenerHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Int
 
 	iproxy.RemoveListener(alistener.Listener)
 	delete(msgActiveListeners, alistener.Id)
-	MessageResponse(c, &successResult{Success:true})
+	MessageResponse(c, &successResult{Success: true})
 }
 
-
-type getListenersMessage struct {}
+type getListenersMessage struct{}
 
 type getListenersResult struct {
 	Success bool
@@ -1567,7 +1565,7 @@ Certificate Management
 */
 
 type loadCertificatesMessage struct {
-	KeyFile string
+	KeyFile         string
 	CertificateFile string
 }
 
@@ -1583,18 +1581,18 @@ func loadCertificatesHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *I
 		return
 	}
 
- 	caCert, err := tls.LoadX509KeyPair(mreq.CertificateFile, mreq.KeyFile)
+	caCert, err := tls.LoadX509KeyPair(mreq.CertificateFile, mreq.KeyFile)
 	if err != nil {
 		ErrorResponse(c, err.Error())
 		return
 	}
 
 	iproxy.SetCACertificate(&caCert)
-	MessageResponse(c, &successResult{Success:true})
+	MessageResponse(c, &successResult{Success: true})
 }
 
 type setCertificatesMessage struct {
-	KeyPEMData []byte
+	KeyPEMData         []byte
 	CertificatePEMData []byte
 }
 
@@ -1610,23 +1608,23 @@ func setCertificatesHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *In
 		return
 	}
 
- 	caCert, err := tls.X509KeyPair(mreq.CertificatePEMData, mreq.KeyPEMData)
+	caCert, err := tls.X509KeyPair(mreq.CertificatePEMData, mreq.KeyPEMData)
 	if err != nil {
 		ErrorResponse(c, err.Error())
 		return
 	}
 
 	iproxy.SetCACertificate(&caCert)
-	MessageResponse(c, &successResult{Success:true})
+	MessageResponse(c, &successResult{Success: true})
 }
 
 func clearCertificatesHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *InterceptingProxy) {
 	iproxy.SetCACertificate(nil)
-	MessageResponse(c, &successResult{Success:true})
+	MessageResponse(c, &successResult{Success: true})
 }
 
 type generateCertificatesMessage struct {
-	KeyFile string
+	KeyFile  string
 	CertFile string
 }
 
@@ -1639,13 +1637,13 @@ func generateCertificatesHandler(b []byte, c net.Conn, logger *log.Logger, iprox
 
 	pair, err := GenerateCACerts()
 	if err != nil {
-		ErrorResponse(c, "error generating certificates: " + err.Error())
+		ErrorResponse(c, "error generating certificates: "+err.Error())
 		return
 	}
 
 	pkeyFile, err := os.OpenFile(mreq.KeyFile, os.O_RDWR|os.O_CREATE, 0600)
 	if err != nil {
-		ErrorResponse(c, "could not save private key: " + err.Error())
+		ErrorResponse(c, "could not save private key: "+err.Error())
 		return
 	}
 	pkeyFile.Write(pair.PrivateKeyPEM())
@@ -1656,7 +1654,7 @@ func generateCertificatesHandler(b []byte, c net.Conn, logger *log.Logger, iprox
 
 	certFile, err := os.OpenFile(mreq.CertFile, os.O_RDWR|os.O_CREATE, 0600)
 	if err != nil {
-		ErrorResponse(c, "could not save private key: " + err.Error())
+		ErrorResponse(c, "could not save private key: "+err.Error())
 		return
 	}
 	certFile.Write(pair.CACertPEM())
@@ -1665,12 +1663,12 @@ func generateCertificatesHandler(b []byte, c net.Conn, logger *log.Logger, iprox
 		return
 	}
 
-	MessageResponse(c, &successResult{Success:true})
+	MessageResponse(c, &successResult{Success: true})
 }
 
 type generatePEMCertificatesResult struct {
-	Success bool
-	KeyPEMData []byte
+	Success            bool
+	KeyPEMData         []byte
 	CertificatePEMData []byte
 }
 
@@ -1683,13 +1681,13 @@ func generatePEMCertificatesHandler(b []byte, c net.Conn, logger *log.Logger, ip
 
 	pair, err := GenerateCACerts()
 	if err != nil {
-		ErrorResponse(c, "error generating certificates: " + err.Error())
+		ErrorResponse(c, "error generating certificates: "+err.Error())
 		return
 	}
 
 	result := &generatePEMCertificatesResult{
-		Success: true,
-		KeyPEMData: pair.PrivateKeyPEM(),
+		Success:            true,
+		KeyPEMData:         pair.PrivateKeyPEM(),
 		CertificatePEMData: pair.CACertPEM(),
 	}
 	MessageResponse(c, result)
@@ -1700,12 +1698,12 @@ Storage functions
 */
 
 type addSQLiteStorageMessage struct {
-	Path string
+	Path        string
 	Description string
 }
 
 type addSQLiteStorageResult struct {
-	Success bool
+	Success   bool
 	StorageId int
 }
 
@@ -1723,13 +1721,13 @@ func addSQLiteStorageHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *I
 
 	storage, err := OpenSQLiteStorage(mreq.Path, logger)
 	if err != nil {
-		ErrorResponse(c, "error opening SQLite databae: " + err.Error())
+		ErrorResponse(c, "error opening SQLite databae: "+err.Error())
 		return
 	}
 
 	sid := iproxy.AddMessageStorage(storage, mreq.Description)
 	result := &addSQLiteStorageResult{
-		Success: true,
+		Success:   true,
 		StorageId: sid,
 	}
 	MessageResponse(c, result)
@@ -1740,7 +1738,7 @@ type addInMemoryStorageMessage struct {
 }
 
 type addInMemoryStorageResult struct {
-	Success bool
+	Success   bool
 	StorageId int
 }
 
@@ -1753,13 +1751,13 @@ func addInMemoryStorageHandler(b []byte, c net.Conn, logger *log.Logger, iproxy 
 
 	storage, err := InMemoryStorage(logger)
 	if err != nil {
-		ErrorResponse(c, "error creating in memory storage: " + err.Error())
+		ErrorResponse(c, "error creating in memory storage: "+err.Error())
 		return
 	}
 
 	sid := iproxy.AddMessageStorage(storage, mreq.Description)
 	result := &addInMemoryStorageResult{
-		Success: true,
+		Success:   true,
 		StorageId: sid,
 	}
 	MessageResponse(c, result)
@@ -1786,7 +1784,7 @@ func closeStorageHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Inter
 	}
 
 	iproxy.CloseMessageStorage(mreq.StorageId)
-	MessageResponse(c, &successResult{Success:true})
+	MessageResponse(c, &successResult{Success: true})
 }
 
 type setProxyStorageMessage struct {
@@ -1811,17 +1809,17 @@ func setProxyStorageHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *In
 		return
 	}
 
-	MessageResponse(c, &successResult{Success:true})
+	MessageResponse(c, &successResult{Success: true})
 }
 
 type savedStorageJSON struct {
-	Id int
+	Id          int
 	Description string
 }
 
 type listProxyStorageResult struct {
 	Storages []*savedStorageJSON
-	Success bool
+	Success  bool
 }
 
 func listProxyStorageHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *InterceptingProxy) {
@@ -1832,7 +1830,49 @@ func listProxyStorageHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *I
 	}
 	result := &listProxyStorageResult{
 		Storages: storagesJSON,
-		Success: true,
+		Success:  true,
 	}
 	MessageResponse(c, result)
+}
+
+/*
+SetProxy
+*/
+
+type setProxyMessage struct {
+	UseProxy       bool
+	ProxyHost      string
+	ProxyPort      int
+	ProxyIsSOCKS   bool
+	UseCredentials bool
+	Username       string
+	Password       string
+}
+
+func setProxyHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *InterceptingProxy) {
+	mreq := setProxyMessage{}
+	if err := json.Unmarshal(b, &mreq); err != nil {
+		ErrorResponse(c, "error parsing message")
+		return
+	}
+
+	var creds *ProxyCredentials = nil
+	if mreq.UseCredentials {
+		creds = &ProxyCredentials{
+			Username: mreq.Username,
+			Password: mreq.Password,
+		}
+	}
+
+	if !mreq.UseProxy {
+		iproxy.ClearUpstreamProxy()
+	} else {
+		if mreq.ProxyIsSOCKS {
+			iproxy.SetUpstreamSOCKSProxy(mreq.ProxyHost, mreq.ProxyPort, creds)
+		} else {
+			iproxy.SetUpstreamProxy(mreq.ProxyHost, mreq.ProxyPort, creds)
+		}
+	}
+
+	MessageResponse(c, &successResult{Success: true})
 }

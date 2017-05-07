@@ -1,10 +1,9 @@
 package main
 
 import (
-	"testing"
 	"runtime"
+	"testing"
 	"time"
-	"fmt"
 )
 
 func testStorage() *SQLiteStorage {
@@ -20,7 +19,7 @@ func checkTags(t *testing.T, result, expected []string) {
 		return
 	}
 
-	for i, a := range(result) {
+	for i, a := range result {
 		b := expected[i]
 		if a != b {
 			t.Errorf("Failed tag test at %s:%d. Expected %s, got %s", f, ln, expected, result)
@@ -55,7 +54,6 @@ func TestTagging(t *testing.T) {
 	testErr(t, err)
 	checkTags(t, req3.Tags(), []string{"bar"})
 }
-
 
 func TestTime(t *testing.T) {
 	req := testReq()

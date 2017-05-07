@@ -68,12 +68,12 @@ const (
 
 // A struct representing the data to be searched for a pair such as a header or url param
 type PairValue struct {
-	key string
+	key   string
 	value string
 }
 
 type QueryPhrase [][]interface{} // A list of queries. Will match if any queries match the request
-type MessageQuery []QueryPhrase // A list of phrases. Will match if all the phrases match the request
+type MessageQuery []QueryPhrase  // A list of phrases. Will match if all the phrases match the request
 
 type StrQueryPhrase [][]string
 type StrMessageQuery []StrQueryPhrase
@@ -451,7 +451,7 @@ func pairValuesFromCookies(cookies []*http.Cookie) []*PairValue {
 	return pairs
 }
 
-func pairsToStrings(pairs []*PairValue) ([]string) {
+func pairsToStrings(pairs []*PairValue) []string {
 	// Converts a list of pairs into a list of strings containing all keys and values
 	// k1: v1, k2: v2 -> ["k1", "v1", "k2", "v2"]
 	strs := make([]string, 0)
@@ -710,9 +710,9 @@ func FieldStrToGo(field string) (SearchField, error) {
 		return FieldBothCookie, nil
 	case "tag":
 		return FieldTag, nil
-	case "after":
+	case "after", "af":
 		return FieldAfter, nil
-	case "before":
+	case "before", "b4":
 		return FieldBefore, nil
 	case "timerange":
 		return FieldTimeRange, nil

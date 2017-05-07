@@ -114,6 +114,13 @@ def main():
                         client.add_listener(iface, port)
                     except MessageError as e:
                         print(str(e))
+
+                # Set upstream proxy
+                if config.use_proxy:
+                    client.set_proxy(config.use_proxy,
+                                     config.proxy_host,
+                                     config.proxy_port,
+                                     config.is_socks_proxy)
             interface_loop(client)
         except MessageError as e:
             print(str(e))

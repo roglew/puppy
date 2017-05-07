@@ -1,11 +1,11 @@
 package main
 
 import (
-	"testing"
 	"runtime"
+	"testing"
 )
 
-func testReq() (*ProxyRequest) {
+func testReq() *ProxyRequest {
 	testReq, _ := ProxyRequestFromBytes(
 		[]byte("POST /?foo=bar HTTP/1.1\r\nFoo: Bar\r\nCookie: cookie=choco\r\nContent-Length: 7\r\n\r\nfoo=baz"),
 		"foobaz",

@@ -2,6 +2,7 @@ import sys
 import string
 import time
 import datetime
+import base64
 from pygments.formatters import TerminalFormatter
 from pygments.lexers import get_lexer_for_mimetype, HttpLexer
 from pygments import highlight
@@ -275,8 +276,8 @@ def clipboard_contents():
 
 def encode_basic_auth(username, password):
     decoded = '%s:%s' % (username, password)
-    encoded = base64.b64encode(decoded)
-    header = 'Basic %s' % encoded
+    encoded = base64.b64encode(decoded.encode())
+    header = 'Basic %s' % encoded.decode()
     return header
 
 def parse_basic_auth(header):

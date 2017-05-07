@@ -3,9 +3,9 @@ package main
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha1"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"crypto/sha1"
 	"encoding/pem"
 	"fmt"
 	"math/big"
@@ -14,7 +14,7 @@ import (
 
 type CAKeyPair struct {
 	Certificate []byte
-	PrivateKey *rsa.PrivateKey
+	PrivateKey  *rsa.PrivateKey
 }
 
 func bigIntHash(n *big.Int) []byte {
@@ -41,16 +41,16 @@ func GenerateCACerts() (*CAKeyPair, error) {
 	template := x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
-			CommonName: "Puppy Proxy",
+			CommonName:   "Puppy Proxy",
 			Organization: []string{"Puppy Proxy"},
 		},
 		NotBefore: time.Now().Add(-5 * time.Minute).UTC(),
 		NotAfter:  end,
 
-		SubjectKeyId: bigIntHash(key.N),
-		KeyUsage: x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		SubjectKeyId:          bigIntHash(key.N),
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
 		BasicConstraintsValid: true,
-		IsCA: true,
+		IsCA:           true,
 		MaxPathLenZero: true,
 	}
 
@@ -61,23 +61,23 @@ func GenerateCACerts() (*CAKeyPair, error) {
 
 	return &CAKeyPair{
 		Certificate: derBytes,
-		PrivateKey: key,
+		PrivateKey:  key,
 	}, nil
 }
 
-func (pair *CAKeyPair) PrivateKeyPEM() ([]byte) {
+func (pair *CAKeyPair) PrivateKeyPEM() []byte {
 	return pem.EncodeToMemory(
 		&pem.Block{
-			Type: "BEGIN PRIVATE KEY",
+			Type:  "BEGIN PRIVATE KEY",
 			Bytes: x509.MarshalPKCS1PrivateKey(pair.PrivateKey),
 		},
 	)
 }
 
-func (pair *CAKeyPair) CACertPEM() ([]byte) {
+func (pair *CAKeyPair) CACertPEM() []byte {
 	return pem.EncodeToMemory(
 		&pem.Block{
-			Type: "CERTIFICATE",
+			Type:  "CERTIFICATE",
 			Bytes: pair.Certificate,
 		},
 	)

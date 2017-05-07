@@ -1,8 +1,8 @@
 package main
 
 import (
-	"fmt"
 	"errors"
+	"fmt"
 )
 
 type MessageStorage interface {
@@ -11,7 +11,7 @@ type MessageStorage interface {
 
 	// Close the storage
 	Close()
-	
+
 	// Update an existing request in the storage. Requires that it has already been saved
 	UpdateRequest(req *ProxyRequest) error
 	// Save a new instance of the request in the storage regardless of if it has already been saved
@@ -20,7 +20,7 @@ type MessageStorage interface {
 	LoadRequest(reqid string) (*ProxyRequest, error)
 	LoadUnmangledRequest(reqid string) (*ProxyRequest, error)
 	// Delete a request
-	DeleteRequest(reqid string) (error)
+	DeleteRequest(reqid string) error
 
 	// Update an existing response in the storage. Requires that it has already been saved
 	UpdateResponse(rsp *ProxyResponse) error
@@ -30,7 +30,7 @@ type MessageStorage interface {
 	LoadResponse(rspid string) (*ProxyResponse, error)
 	LoadUnmangledResponse(rspid string) (*ProxyResponse, error)
 	// Delete a response
-	DeleteResponse(rspid string) (error)
+	DeleteResponse(rspid string) error
 
 	// Update an existing websocket message in the storage. Requires that it has already been saved
 	UpdateWSMessage(req *ProxyRequest, wsm *ProxyWSMessage) error
@@ -40,7 +40,7 @@ type MessageStorage interface {
 	LoadWSMessage(wsmid string) (*ProxyWSMessage, error)
 	LoadUnmangledWSMessage(wsmid string) (*ProxyWSMessage, error)
 	// Delete a WSMessage
-	DeleteWSMessage(wsmid string) (error)
+	DeleteWSMessage(wsmid string) error
 
 	// Get list of all the request keys
 	RequestKeys() ([]string, error)
@@ -57,9 +57,9 @@ type MessageStorage interface {
 
 	// Query functions
 	AllSavedQueries() ([]*SavedQuery, error)
-	SaveQuery(name string, query MessageQuery) (error)
+	SaveQuery(name string, query MessageQuery) error
 	LoadQuery(name string) (MessageQuery, error)
-	DeleteQuery(name string) (error)
+	DeleteQuery(name string) error
 }
 
 const QueryNotSupported = ConstErr("custom query not supported")
@@ -67,7 +67,7 @@ const QueryNotSupported = ConstErr("custom query not supported")
 type ReqSort []*ProxyRequest
 
 type SavedQuery struct {
-	Name string
+	Name  string
 	Query MessageQuery
 }
 
@@ -118,7 +118,7 @@ func SaveNewRequest(ms MessageStorage, req *ProxyRequest) error {
 	}
 
 	if err := ms.SaveNewRequest(req); err != nil {
-			return fmt.Errorf("error saving new request: %s", err.Error())
+		return fmt.Errorf("error saving new request: %s", err.Error())
 	}
 
 	for _, wsm := range req.WSMessages {
@@ -224,4 +224,3 @@ func UpdateWSMessage(ms MessageStorage, req *ProxyRequest, wsm *ProxyWSMessage) 
 		return ms.UpdateWSMessage(req, wsm)
 	}
 }
-

@@ -4,7 +4,6 @@ import (
 	"net/url"
 	"runtime"
 	"testing"
-
 	// "bytes"
 	// "net/http"
 	// "bufio"
@@ -80,13 +79,13 @@ func TestEq(t *testing.T) {
 	}
 
 	req1.Header = map[string][]string{
-		"Foo": []string{"Bar", "Baz"},
-		"Foo2": []string{"Bar2", "Baz2"},
+		"Foo":    []string{"Bar", "Baz"},
+		"Foo2":   []string{"Bar2", "Baz2"},
 		"Cookie": []string{"cookie=cocks"},
 	}
 	req2.Header = map[string][]string{
-		"Foo": []string{"Bar", "Baz"},
-		"Foo2": []string{"Bar2", "Baz2"},
+		"Foo":    []string{"Bar", "Baz"},
+		"Foo2":   []string{"Bar2", "Baz2"},
 		"Cookie": []string{"cookie=cocks"},
 	}
 
@@ -95,8 +94,8 @@ func TestEq(t *testing.T) {
 	}
 
 	req2.Header = map[string][]string{
-		"Foo": []string{"Baz", "Bar"},
-		"Foo2": []string{"Bar2", "Baz2"},
+		"Foo":    []string{"Baz", "Bar"},
+		"Foo2":   []string{"Bar2", "Baz2"},
 		"Cookie": []string{"cookie=cocks"},
 	}
 	if req1.Eq(req2) {
@@ -104,8 +103,8 @@ func TestEq(t *testing.T) {
 	}
 
 	req2.Header = map[string][]string{
-		"Foo": []string{"Bar", "Baz"},
-		"Foo2": []string{"Bar2", "Baz2"},
+		"Foo":    []string{"Bar", "Baz"},
+		"Foo2":   []string{"Bar2", "Baz2"},
 		"Cookie": []string{"cookiee=cocks"},
 	}
 	if req1.Eq(req2) {

@@ -54,7 +54,7 @@ type ProxyConn interface {
 	net.Conn
 
 	Id() int
-	Logger() (*log.Logger)
+	Logger() *log.Logger
 
 	SetCACertificate(*tls.Certificate)
 	StartMaybeTLS(hostname string) (bool, error)
@@ -67,12 +67,12 @@ type proxyAddr struct {
 }
 
 type proxyConn struct {
-	Addr   *proxyAddr
-	logger *log.Logger
-	id     int
+	Addr    *proxyAddr
+	logger  *log.Logger
+	id      int
 	conn    net.Conn      // Wrapped connection
 	readReq *http.Request // A replaced request
-	caCert *tls.Certificate
+	caCert  *tls.Certificate
 }
 
 // ProxyAddr implementations/functions
@@ -122,7 +122,6 @@ func (a *proxyAddr) Network() string {
 func (a *proxyAddr) String() string {
 	return EncodeRemoteAddr(a.Host, a.Port, a.UseTLS)
 }
-
 
 //// bufferedConn and wrappers
 type bufferedConn struct {
@@ -227,7 +226,7 @@ func (pconn *proxyConn) StartMaybeTLS(hostname string) (bool, error) {
 
 		config := &tls.Config{
 			InsecureSkipVerify: true,
-			Certificates: []tls.Certificate{cert},
+			Certificates:       []tls.Certificate{cert},
 		}
 		tlsConn := tls.Server(bufConn, config)
 		pconn.conn = tlsConn
@@ -239,8 +238,8 @@ func (pconn *proxyConn) StartMaybeTLS(hostname string) (bool, error) {
 }
 
 func NewProxyConn(c net.Conn, l *log.Logger) *proxyConn {
-	a := proxyAddr{Host:"", Port:-1, UseTLS:false}
-	p := proxyConn{Addr:&a, logger:l, conn:c, readReq:nil}
+	a := proxyAddr{Host: "", Port: -1, UseTLS: false}
+	p := proxyConn{Addr: &a, logger: l, conn: c, readReq: nil}
 	p.id = getNextConnId()
 	return &p
 }
@@ -262,15 +261,15 @@ type ProxyListener struct {
 
 	State int
 
-	inputListeners   mapset.Set
-	mtx              sync.Mutex
-	logger           *log.Logger
-	outputConns      chan ProxyConn
-	inputConns       chan net.Conn
-	outputConnDone   chan struct{}
-	inputConnDone    chan struct{}
-	listenWg         sync.WaitGroup
-	caCert           *tls.Certificate
+	inputListeners mapset.Set
+	mtx            sync.Mutex
+	logger         *log.Logger
+	outputConns    chan ProxyConn
+	inputConns     chan net.Conn
+	outputConnDone chan struct{}
+	inputConnDone  chan struct{}
+	listenWg       sync.WaitGroup
+	caCert         *tls.Certificate
 }
 
 type listenerData struct {
@@ -278,7 +277,7 @@ type listenerData struct {
 	Listener net.Listener
 }
 
-func newListenerData(listener net.Listener) (*listenerData) {
+func newListenerData(listener net.Listener) *listenerData {
 	l := listenerData{}
 	l.Id = getNextListenerId()
 	l.Listener = listener
@@ -317,7 +316,7 @@ func NewProxyListener(logger *log.Logger) *ProxyListener {
 
 	l.State = ProxyRunning
 	l.logger.Println("Proxy Started")
-	
+
 	return &l
 }
 
@@ -342,7 +341,7 @@ func (listener *ProxyListener) Accept() (net.Conn, error) {
 func (listener *ProxyListener) Close() error {
 	listener.mtx.Lock()
 	defer listener.mtx.Unlock()
-	
+
 	listener.logger.Println("Closing ProxyListener...")
 	listener.State = ProxyStopped
 	close(listener.outputConnDone)
@@ -369,10 +368,10 @@ func (listener *ProxyListener) Addr() net.Addr {
 func (listener *ProxyListener) AddListener(inlisten net.Listener) error {
 	listener.mtx.Lock()
 	defer listener.mtx.Unlock()
-	
+
 	listener.logger.Println("Adding listener to ProxyListener:", inlisten)
 	il := newListenerData(inlisten)
-	l  := listener
+	l := listener
 	listener.listenWg.Add(1)
 	go func() {
 		defer l.listenWg.Done()

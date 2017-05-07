@@ -23,7 +23,7 @@ class WatchMacro(InterceptMacro):
         printstr = "< "
         printstr += verb_color(request.method) + request.method + Colors.ENDC + ' '
         printstr += url_formatter(request, colored=True)
-        printstr += " -> "
+        printstr += " \u2192 "
         response_code = str(response.status_code) + ' ' + response.reason
         response_code = scode_color(response_code) + response_code + Colors.ENDC
         printstr += response_code

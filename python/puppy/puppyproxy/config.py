@@ -4,7 +4,8 @@ import json
 default_config = """{
     "listeners": [
         {"iface": "127.0.0.1", "port": 8080}
-    ]
+    ],
+    "proxy": {"use_proxy": false, "host": "", "port": 0, "is_socks": false}
 }"""
 
 
@@ -12,6 +13,7 @@ class ProxyConfig:
     
     def __init__(self):
         self._listeners = [('127.0.0.1', '8080')]
+        self._proxy = {'use_proxy': False, 'host': '', 'port': 0, 'is_socks': False}
         
     def load(self, fname):
         try:
@@ -39,6 +41,10 @@ class ProxyConfig:
                     iface = '127.0.0.1'
 
                 self._listeners.append((iface, port))
+
+        if 'proxy' in config_info:
+            self._proxy = config_info['proxy']
+            
                 
     @property
     def listeners(self):
@@ -47,3 +53,67 @@ class ProxyConfig:
     @listeners.setter
     def listeners(self, val):
         self._listeners = val
+        
+    @property
+    def proxy(self):
+        # don't use this, use the getters to get the parsed values
+        return self._proxy
+        
+    @proxy.setter
+    def proxy(self, val):
+        self._proxy = val
+
+    @property
+    def use_proxy(self):
+        if self._proxy is None:
+            return False
+        if 'use_proxy' in self._proxy:
+            if self._proxy['use_proxy']:
+                return True
+        return False
+
+    @property
+    def proxy_host(self):
+        if self._proxy is None:
+            return ''
+        if 'host' in self._proxy:
+            return self._proxy['host']
+        return ''
+
+    @property
+    def proxy_port(self):
+        if self._proxy is None:
+            return ''
+        if 'port' in self._proxy:
+            return self._proxy['port']
+        return ''
+
+    @property
+    def proxy_username(self):
+        if self._proxy is None:
+            return ''
+        if 'username' in self._proxy:
+            return self._proxy['username']
+        return ''
+
+    @property
+    def proxy_password(self):
+        if self._proxy is None:
+            return ''
+        if 'password' in self._proxy:
+            return self._proxy['password']
+        return ''
+
+    @property
+    def use_proxy_creds(self):
+        return ('username' in self._proxy or 'password' in self._proxy)
+
+    @property
+    def is_socks_proxy(self):
+        if self._proxy is None:
+            return False
+        if 'is_socks' in self._proxy:
+            if self._proxy['is_socks']:
+                return True
+        return False
+

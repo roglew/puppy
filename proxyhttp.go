@@ -15,12 +15,13 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
-	"strings"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/deckarep/golang-set"
 	"github.com/gorilla/websocket"
+	"golang.org/x/net/proxy"
 )
 
 const (
@@ -28,10 +29,12 @@ const (
 	ToClient
 )
 
+type NetDialer func(network, addr string) (net.Conn, error)
+
 type ProxyResponse struct {
 	http.Response
 	bodyBytes []byte
-	DbId string // ID used by storage implementation. Blank string = unsaved
+	DbId      string // ID used by storage implementation. Blank string = unsaved
 	Unmangled *ProxyResponse
 }
 
@@ -49,32 +52,47 @@ type ProxyRequest struct {
 	Unmangled      *ProxyRequest
 
 	// Additional data
-	bodyBytes []byte
-	DbId      string // ID used by storage implementation. Blank string = unsaved
+	bodyBytes     []byte
+	DbId          string // ID used by storage implementation. Blank string = unsaved
 	StartDatetime time.Time
 	EndDatetime   time.Time
 
 	tags mapset.Set
+
+	NetDial NetDialer
 }
 
 type WSSession struct {
 	websocket.Conn
-	
+
 	Request *ProxyRequest // Request used for handshake
 }
 
 type ProxyWSMessage struct {
-	Type int
-	Message []byte
+	Type      int
+	Message   []byte
 	Direction int
 	Unmangled *ProxyWSMessage
 	Timestamp time.Time
-	Request *ProxyRequest
+	Request   *ProxyRequest
 
 	DbId string // ID used by storage implementation. Blank string = unsaved
 }
 
-func NewProxyRequest(r *http.Request, destHost string, destPort int, destUseTLS bool) (*ProxyRequest) {
+func PerformConnect(conn net.Conn, destHost string, destPort int) error {
+	connStr := []byte(fmt.Sprintf("CONNECT %s:%d HTTP/1.1\r\nHost: %s\r\nProxy-Connection: Keep-Alive\r\n\r\n", destHost, destPort, destHost))
+	conn.Write(connStr)
+	rsp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		return fmt.Errorf("error performing CONNECT handshake: %s", err.Error())
+	}
+	if rsp.StatusCode != 200 {
+		return fmt.Errorf("error performing CONNECT handshake")
+	}
+	return nil
+}
+
+func NewProxyRequest(r *http.Request, destHost string, destPort int, destUseTLS bool) *ProxyRequest {
 	var retReq *ProxyRequest
 	if r != nil {
 		// Write/reread the request to make sure we get all the extra headers Go adds into req.Header
@@ -98,6 +116,7 @@ func NewProxyRequest(r *http.Request, destHost string, destPort int, destUseTLS 
 			time.Unix(0, 0),
 			time.Unix(0, 0),
 			mapset.NewSet(),
+			nil,
 		}
 	} else {
 		newReq, _ := http.NewRequest("GET", "/", nil) // Ignore error since this should be run the same every time and shouldn't error
@@ -116,6 +135,7 @@ func NewProxyRequest(r *http.Request, destHost string, destPort int, destUseTLS 
 			time.Unix(0, 0),
 			time.Unix(0, 0),
 			mapset.NewSet(),
+			nil,
 		}
 	}
 
@@ -125,7 +145,7 @@ func NewProxyRequest(r *http.Request, destHost string, destPort int, destUseTLS 
 	return retReq
 }
 
-func ProxyRequestFromBytes(b []byte,  destHost string, destPort int, destUseTLS bool) (*ProxyRequest, error) {
+func ProxyRequestFromBytes(b []byte, destHost string, destPort int, destUseTLS bool) (*ProxyRequest, error) {
 	buf := bytes.NewBuffer(b)
 	httpReq, err := http.ReadRequest(bufio.NewReader(buf))
 	if err != nil {
@@ -135,7 +155,7 @@ func ProxyRequestFromBytes(b []byte,  destHost string, destPort int, destUseTLS 
 	return NewProxyRequest(httpReq, destHost, destPort, destUseTLS), nil
 }
 
-func NewProxyResponse(r *http.Response) (*ProxyResponse) {
+func NewProxyResponse(r *http.Response) *ProxyResponse {
 	// Write/reread the request to make sure we get all the extra headers Go adds into req.Header
 	oldClose := r.Close
 	r.Close = false
@@ -170,12 +190,12 @@ func ProxyResponseFromBytes(b []byte) (*ProxyResponse, error) {
 
 func NewProxyWSMessage(mtype int, message []byte, direction int) (*ProxyWSMessage, error) {
 	return &ProxyWSMessage{
-		Type: mtype,
-		Message: message,
+		Type:      mtype,
+		Message:   message,
 		Direction: direction,
 		Unmangled: nil,
 		Timestamp: time.Unix(0, 0),
-		DbId: "",
+		DbId:      "",
 	}, nil
 }
 
@@ -197,7 +217,7 @@ func (req *ProxyRequest) DestScheme() string {
 
 func (req *ProxyRequest) FullURL() *url.URL {
 	// Same as req.URL but guarantees it will include the scheme, host, and port if necessary
-	
+
 	var u url.URL
 	u = *(req.URL) // Copy the original req.URL
 	u.Host = req.Host
@@ -207,7 +227,7 @@ func (req *ProxyRequest) FullURL() *url.URL {
 
 func (req *ProxyRequest) DestURL() *url.URL {
 	// Same as req.FullURL() but uses DestHost and DestPort for the host and port
-	
+
 	var u url.URL
 	u = *(req.URL) // Copy the original req.URL
 	u.Scheme = req.DestScheme()
@@ -221,33 +241,38 @@ func (req *ProxyRequest) DestURL() *url.URL {
 	return &u
 }
 
-func (req *ProxyRequest) Submit() error {
-	// Connect to the remote server
-	var conn net.Conn
-	var err error
-	dest := fmt.Sprintf("%s:%d", req.DestHost, req.DestPort)
-	if req.DestUseTLS {
-		// Use TLS
-		conn, err = tls.Dial("tcp", dest, nil)
-		if err != nil {
+func (req *ProxyRequest) Submit(conn net.Conn) error {
+	return req.submit(conn, false, nil)
+}
+
+func (req *ProxyRequest) SubmitProxy(conn net.Conn, creds *ProxyCredentials) error {
+	return req.submit(conn, true, creds)
+}
+
+func (req *ProxyRequest) submit(conn net.Conn, forProxy bool, proxyCreds *ProxyCredentials) error {
+	// Write the request to the connection
+	req.StartDatetime = time.Now()
+	if forProxy {
+		if req.DestUseTLS {
+			req.URL.Scheme = "https"
+		} else {
+			req.URL.Scheme = "http"
+		}
+		req.URL.Opaque = ""
+
+		if err := req.RepeatableProxyWrite(conn, proxyCreds); err != nil {
 			return err
 		}
 	} else {
-		// Use plaintext
-		conn, err = net.Dial("tcp", dest)
-		if err != nil {
+		if err := req.RepeatableWrite(conn); err != nil {
 			return err
 		}
 	}
 
-	// Write the request to the connection
-	req.StartDatetime = time.Now()
-	req.RepeatableWrite(conn)
-
 	// Read a response from the server
 	httpRsp, err := http.ReadResponse(bufio.NewReader(conn), nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("error reading response: %s", err.Error())
 	}
 	req.EndDatetime = time.Now()
 
@@ -256,7 +281,7 @@ func (req *ProxyRequest) Submit() error {
 	return nil
 }
 
-func (req *ProxyRequest) WSDial() (*WSSession, error) {
+func (req *ProxyRequest) WSDial(conn net.Conn) (*WSSession, error) {
 	if !req.IsWSUpgrade() {
 		return nil, fmt.Errorf("could not start websocket session: request is not a websocket handshake request")
 	}
@@ -276,16 +301,89 @@ func (req *ProxyRequest) WSDial() (*WSSession, error) {
 	}
 
 	dialer := &websocket.Dialer{}
-	conn, rsp, err := dialer.Dial(req.DestURL().String(), upgradeHeaders)
+	dialer.NetDial = func(network, address string) (net.Conn, error) {
+		return conn, nil
+	}
+
+	wsconn, rsp, err := dialer.Dial(req.DestURL().String(), upgradeHeaders)
 	if err != nil {
 		return nil, fmt.Errorf("could not dial WebSocket server: %s", err)
 	}
 	req.ServerResponse = NewProxyResponse(rsp)
 	wsession := &WSSession{
-		*conn,
+		*wsconn,
 		req,
 	}
 	return wsession, nil
+}
+
+func WSDial(req *ProxyRequest) (*WSSession, error) {
+	return wsDial(req, false, "", 0, nil, false)
+}
+
+func WSDialProxy(req *ProxyRequest, proxyHost string, proxyPort int, creds *ProxyCredentials) (*WSSession, error) {
+	return wsDial(req, true, proxyHost, proxyPort, creds, false)
+}
+
+func WSDialSOCKSProxy(req *ProxyRequest, proxyHost string, proxyPort int, creds *ProxyCredentials) (*WSSession, error) {
+	return wsDial(req, true, proxyHost, proxyPort, creds, true)
+}
+
+func wsDial(req *ProxyRequest, useProxy bool, proxyHost string, proxyPort int, proxyCreds *ProxyCredentials, proxyIsSOCKS bool) (*WSSession, error) {
+	var conn net.Conn
+	var dialer NetDialer
+	var err error
+
+	if req.NetDial != nil {
+		dialer = req.NetDial
+	} else {
+		dialer = net.Dial
+	}
+
+	if useProxy {
+		if proxyIsSOCKS {
+			var socksCreds *proxy.Auth
+			if proxyCreds != nil {
+				socksCreds = &proxy.Auth{
+					User:     proxyCreds.Username,
+					Password: proxyCreds.Password,
+				}
+			}
+			socksDialer, err := proxy.SOCKS5("tcp", fmt.Sprintf("%s:%d", proxyHost, proxyPort), socksCreds, proxy.Direct)
+			if err != nil {
+				return nil, fmt.Errorf("error creating SOCKS dialer: %s", err.Error())
+			}
+			conn, err = socksDialer.Dial("tcp", fmt.Sprintf("%s:%d", req.DestHost, req.DestPort))
+			if err != nil {
+				return nil, fmt.Errorf("error dialing host: %s", err.Error())
+			}
+			defer conn.Close()
+		} else {
+			conn, err = dialer("tcp", fmt.Sprintf("%s:%d", proxyHost, proxyPort))
+			if err != nil {
+				return nil, fmt.Errorf("error dialing proxy: %s", err.Error())
+			}
+
+			// always perform a CONNECT for websocket regardless of SSL
+			if err := PerformConnect(conn, req.DestHost, req.DestPort); err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		conn, err = dialer("tcp", fmt.Sprintf("%s:%d", req.DestHost, req.DestPort))
+		if err != nil {
+			return nil, fmt.Errorf("error dialing host: %s", err.Error())
+		}
+	}
+
+	if req.DestUseTLS {
+		tls_conn := tls.Client(conn, &tls.Config{
+			InsecureSkipVerify: true,
+		})
+		conn = tls_conn
+	}
+
+	return req.WSDial(conn)
 }
 
 func (req *ProxyRequest) IsWSUpgrade() bool {
@@ -322,7 +420,7 @@ func (req *ProxyRequest) Eq(other *ProxyRequest) bool {
 	return true
 }
 
-func (req *ProxyRequest) Clone() (*ProxyRequest) {
+func (req *ProxyRequest) Clone() *ProxyRequest {
 	buf := bytes.NewBuffer(make([]byte, 0))
 	req.RepeatableWrite(buf)
 	newReq, err := ProxyRequestFromBytes(buf.Bytes(), req.DestHost, req.DestPort, req.DestUseTLS)
@@ -336,7 +434,7 @@ func (req *ProxyRequest) Clone() (*ProxyRequest) {
 	return newReq
 }
 
-func (req *ProxyRequest) DeepClone() (*ProxyRequest) {
+func (req *ProxyRequest) DeepClone() *ProxyRequest {
 	// Returns a request with the same request, response, and associated websocket messages
 	newReq := req.Clone()
 	newReq.DbId = req.DbId
@@ -344,7 +442,7 @@ func (req *ProxyRequest) DeepClone() (*ProxyRequest) {
 	if req.Unmangled != nil {
 		newReq.Unmangled = req.Unmangled.DeepClone()
 	}
-	
+
 	if req.ServerResponse != nil {
 		newReq.ServerResponse = req.ServerResponse.DeepClone()
 	}
@@ -361,9 +459,19 @@ func (req *ProxyRequest) resetBodyReader() {
 	req.Body = ioutil.NopCloser(bytes.NewBuffer(req.BodyBytes()))
 }
 
-func (req *ProxyRequest) RepeatableWrite(w io.Writer) {
-	req.Write(w)
-	req.resetBodyReader()
+func (req *ProxyRequest) RepeatableWrite(w io.Writer) error {
+	defer req.resetBodyReader()
+	return req.Write(w)
+}
+
+func (req *ProxyRequest) RepeatableProxyWrite(w io.Writer, proxyCreds *ProxyCredentials) error {
+	defer req.resetBodyReader()
+	if proxyCreds != nil {
+		authHeader := proxyCreds.SerializeHeader()
+		req.Header.Set("Proxy-Authorization", authHeader)
+		defer func() { req.Header.Del("Proxy-Authorization") }()
+	}
+	return req.WriteProxy(w)
 }
 
 func (req *ProxyRequest) BodyBytes() []byte {
@@ -376,7 +484,7 @@ func (req *ProxyRequest) SetBodyBytes(bs []byte) {
 	req.resetBodyReader()
 
 	// Parse the form if we can, ignore errors
-	req.ParseMultipartForm(1024*1024*1024) // 1GB for no good reason
+	req.ParseMultipartForm(1024 * 1024 * 1024) // 1GB for no good reason
 	req.ParseForm()
 	req.resetBodyReader()
 	req.Header.Set("Content-Length", strconv.Itoa(len(bs)))
@@ -418,7 +526,7 @@ func (req *ProxyRequest) SetURLParameter(key string, value string) {
 	req.ParseForm()
 }
 
-func (req *ProxyRequest) URLParameters() (url.Values) {
+func (req *ProxyRequest) URLParameters() url.Values {
 	vals := req.URL.Query()
 	return vals
 }
@@ -479,7 +587,7 @@ func (req *ProxyRequest) StatusLine() string {
 	return fmt.Sprintf("%s %s %s", req.Method, req.HTTPPath(), req.Proto)
 }
 
-func (req *ProxyRequest) HeaderSection() (string) {
+func (req *ProxyRequest) HeaderSection() string {
 	retStr := req.StatusLine()
 	retStr += "\r\n"
 	for k, vs := range req.Header {
@@ -495,9 +603,9 @@ func (rsp *ProxyResponse) resetBodyReader() {
 	rsp.Body = ioutil.NopCloser(bytes.NewBuffer(rsp.BodyBytes()))
 }
 
-func (rsp *ProxyResponse) RepeatableWrite(w io.Writer) {
-	rsp.Write(w)
-	rsp.resetBodyReader()
+func (rsp *ProxyResponse) RepeatableWrite(w io.Writer) error {
+	defer rsp.resetBodyReader()
+	return rsp.Write(w)
 }
 
 func (rsp *ProxyResponse) BodyBytes() []byte {
@@ -510,7 +618,7 @@ func (rsp *ProxyResponse) SetBodyBytes(bs []byte) {
 	rsp.Header.Set("Content-Length", strconv.Itoa(len(bs)))
 }
 
-func (rsp *ProxyResponse) Clone() (*ProxyResponse) {
+func (rsp *ProxyResponse) Clone() *ProxyResponse {
 	buf := bytes.NewBuffer(make([]byte, 0))
 	rsp.RepeatableWrite(buf)
 	newRsp, err := ProxyResponseFromBytes(buf.Bytes())
@@ -520,7 +628,7 @@ func (rsp *ProxyResponse) Clone() (*ProxyResponse) {
 	return newRsp
 }
 
-func (rsp *ProxyResponse) DeepClone() (*ProxyResponse) {
+func (rsp *ProxyResponse) DeepClone() *ProxyResponse {
 	newRsp := rsp.Clone()
 	newRsp.DbId = rsp.DbId
 	if rsp.Unmangled != nil {
@@ -565,7 +673,7 @@ func (rsp *ProxyResponse) StatusLine() string {
 	return fmt.Sprintf("HTTP/%d.%d %03d %s", rsp.ProtoMajor, rsp.ProtoMinor, rsp.StatusCode, rsp.HTTPStatus())
 }
 
-func (rsp *ProxyResponse) HeaderSection() (string) {
+func (rsp *ProxyResponse) HeaderSection() string {
 	retStr := rsp.StatusLine()
 	retStr += "\r\n"
 	for k, vs := range rsp.Header {
@@ -585,7 +693,7 @@ func (msg *ProxyWSMessage) String() string {
 	return fmt.Sprintf("{WS Message  msg=\"%s\", type=%d, dir=%s}", string(msg.Message), msg.Type, dirStr)
 }
 
-func (msg *ProxyWSMessage) Clone() (*ProxyWSMessage) {
+func (msg *ProxyWSMessage) Clone() *ProxyWSMessage {
 	var retMsg ProxyWSMessage
 	retMsg.Type = msg.Type
 	retMsg.Message = msg.Message
@@ -595,7 +703,7 @@ func (msg *ProxyWSMessage) Clone() (*ProxyWSMessage) {
 	return &retMsg
 }
 
-func (msg *ProxyWSMessage) DeepClone() (*ProxyWSMessage) {
+func (msg *ProxyWSMessage) DeepClone() *ProxyWSMessage {
 	retMsg := msg.Clone()
 	retMsg.DbId = msg.DbId
 	if msg.Unmangled != nil {
@@ -613,7 +721,7 @@ func (msg *ProxyWSMessage) Eq(other *ProxyWSMessage) bool {
 	return true
 }
 
-func CopyHeader(hd http.Header) (http.Header) {
+func CopyHeader(hd http.Header) http.Header {
 	var ret http.Header = make(http.Header)
 	for k, vs := range hd {
 		for _, v := range vs {
@@ -621,4 +729,81 @@ func CopyHeader(hd http.Header) (http.Header) {
 		}
 	}
 	return ret
+}
+
+func submitRequest(req *ProxyRequest, useProxy bool, proxyHost string,
+	proxyPort int, proxyCreds *ProxyCredentials, proxyIsSOCKS bool) error {
+	var dialer NetDialer = req.NetDial
+	if dialer == nil {
+		dialer = net.Dial
+	}
+
+	var conn net.Conn
+	var err error
+	var proxyFormat bool = false
+	if useProxy {
+		if proxyIsSOCKS {
+			var socksCreds *proxy.Auth
+			if proxyCreds != nil {
+				socksCreds = &proxy.Auth{
+					User:     proxyCreds.Username,
+					Password: proxyCreds.Password,
+				}
+			}
+			socksDialer, err := proxy.SOCKS5("tcp", fmt.Sprintf("%s:%d", proxyHost, proxyPort), socksCreds, proxy.Direct)
+			if err != nil {
+				return fmt.Errorf("error creating SOCKS dialer: %s", err.Error())
+			}
+			conn, err = socksDialer.Dial("tcp", fmt.Sprintf("%s:%d", req.DestHost, req.DestPort))
+			if err != nil {
+				return fmt.Errorf("error dialing host: %s", err.Error())
+			}
+			defer conn.Close()
+		} else {
+			conn, err = dialer("tcp", fmt.Sprintf("%s:%d", proxyHost, proxyPort))
+			if err != nil {
+				return fmt.Errorf("error dialing proxy: %s", err.Error())
+			}
+			defer conn.Close()
+			if req.DestUseTLS {
+				if err := PerformConnect(conn, req.DestHost, req.DestPort); err != nil {
+					return err
+				}
+				proxyFormat = false
+			} else {
+				proxyFormat = true
+			}
+		}
+	} else {
+		conn, err = dialer("tcp", fmt.Sprintf("%s:%d", req.DestHost, req.DestPort))
+		if err != nil {
+			return fmt.Errorf("error dialing host: %s", err.Error())
+		}
+		defer conn.Close()
+	}
+
+	if req.DestUseTLS {
+		tls_conn := tls.Client(conn, &tls.Config{
+			InsecureSkipVerify: true,
+		})
+		conn = tls_conn
+	}
+
+	if proxyFormat {
+		return req.SubmitProxy(conn, proxyCreds)
+	} else {
+		return req.Submit(conn)
+	}
+}
+
+func SubmitRequest(req *ProxyRequest) error {
+	return submitRequest(req, false, "", 0, nil, false)
+}
+
+func SubmitRequestProxy(req *ProxyRequest, proxyHost string, proxyPort int, creds *ProxyCredentials) error {
+	return submitRequest(req, true, proxyHost, proxyPort, creds, false)
+}
+
+func SubmitRequestSOCKSProxy(req *ProxyRequest, proxyHost string, proxyPort int, creds *ProxyCredentials) error {
+	return submitRequest(req, true, proxyHost, proxyPort, creds, true)
 }

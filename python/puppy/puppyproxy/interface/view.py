@@ -481,17 +481,23 @@ def site_map(client, args):
         paths = True
     else:
         paths = False
-    reqs = client.in_context_requests(headers_only=True)
-    paths_set = set()
-    for req in reqs:
-        if req.response and req.response.status_code != 404:
-            paths_set.add(path_tuple(req.url))
-    tree = sorted(list(paths_set))
-    if paths:
-        for p in tree:
-            print ('/'.join(list(p)))
-    else:
-        print_tree(tree)
+    all_reqs = client.in_context_requests(headers_only=True)
+    reqs_by_host = {}
+    for req in all_reqs:
+        reqs_by_host.setdefault(req.dest_host, []).append(req)
+    for host, reqs in reqs_by_host.items():
+        paths_set = set()
+        for req in reqs:
+            if req.response and req.response.status_code != 404:
+                paths_set.add(path_tuple(req.url))
+        tree = sorted(list(paths_set))
+        print(host)
+        if paths:
+            for p in tree:
+                print ('/'.join(list(p)))
+        else:
+            print_tree(tree)
+        print("")
 
 def dump_response(client, args):
     """
@@ -514,6 +520,78 @@ def dump_response(client, args):
         print('Response data written to {}'.format(fname))
     else:
         print('Request {} does not have a response'.format(req.reqid))
+
+def get_surrounding_lines(s, n, lines):
+    left = n
+    right = n
+    lines_left = 0
+    lines_right = 0
+
+    # move left until we find enough lines or hit the edge
+    while left > 0 and lines_left < lines:
+        if s[left] == '\n':
+            lines_left += 1
+        left -= 1
+
+    # move right until we find enough lines or hit the edge
+    while right < len(s) and lines_right < lines:
+        if s[right] == '\n':
+            lines_right += 1
+        right += 1
+
+    return s[left:right]
+
+def print_search_header(reqid, locstr):
+    printstr = Styles.TABLE_HEADER
+    printstr += "Result(s) for request {} ({})".format(reqid, locstr)
+    printstr += Colors.ENDC
+    print(printstr)
+
+def highlight_str(s, substr):
+    highlighted = Colors.BGYELLOW + Colors.BLACK + Colors.BOLD + substr + Colors.ENDC
+    return s.replace(substr, highlighted)
+
+def search_message(mes, substr, lines, reqid, locstr):
+    header_printed = False
+    for m in re.finditer(substr, mes):
+        if not header_printed:
+            print_search_header(reqid, locstr)
+            header_printed = True
+        n = m.start()
+        linestr = get_surrounding_lines(mes, n, lines)
+        linelist = linestr.split('\n')
+        linestr = '\n'.join(line[:500] for line in linelist)
+        toprint = highlight_str(linestr, substr)
+        print(toprint)
+        print('-'*50)
+
+def search(client, args):
+    search_str = args[0]
+    lines = 2
+    if len(args) > 1:
+        lines = int(args[1])
+    for req in client.in_context_requests_iter():
+        reqid = client.get_reqid(req)
+        reqheader_printed = False
+        try:
+            mes = req.full_message().decode()
+            search_message(mes, search_str, lines, reqid, "Request")
+        except UnicodeDecodeError:
+            pass
+        if req.response:
+            try:
+                mes = req.response.full_message().decode()
+                search_message(mes, search_str, lines, reqid, "Response")
+            except UnicodeDecodeError:
+                pass
+
+        wsheader_printed = False
+        for wsm in req.ws_messages:
+            if not wsheader_printed:
+                print_search_header(client.get_reqid(req), reqid, "Websocket Messages")
+                wsheader_printed = True
+            if search_str in wsm.message:
+                print(highlight_str(wsm.message, search_str))
 
 
 # @crochet.wait_for(timeout=None)
@@ -572,6 +650,7 @@ def load_cmds(cmd):
         'urls': (find_urls, None),
         'site_map': (site_map, None),
         'dump_response': (dump_response, None),
+        'search': (search, None),
         # 'view_request_bytes': (view_request_bytes, None),
         # 'view_response_bytes': (view_response_bytes, None),
     })

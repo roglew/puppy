@@ -11,17 +11,19 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/gorilla/websocket"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 var REQUEST_SELECT string = "SELECT id, full_request, response_id, unmangled_id, port, is_ssl, host, start_datetime, end_datetime FROM requests"
 var RESPONSE_SELECT string = "SELECT id, full_response, unmangled_id FROM responses"
 var WS_SELECT string = "SELECT id, parent_request, unmangled_id, is_binary, direction, time_sent, contents FROM websocket_messages"
 
+var inmemIdCounter = IdCounter()
+
 type SQLiteStorage struct {
 	dbConn *sql.DB
-	mtx sync.Mutex
+	mtx    sync.Mutex
 	logger *log.Logger
 }
 
@@ -49,7 +51,8 @@ func OpenSQLiteStorage(fname string, logger *log.Logger) (*SQLiteStorage, error)
 }
 
 func InMemoryStorage(logger *log.Logger) (*SQLiteStorage, error) {
-	return OpenSQLiteStorage("file::memory:?mode=memory&cache=shared", logger)
+	var toOpen = fmt.Sprintf("file:inmem%d:memory:?mode=memory&cache=shared", inmemIdCounter())
+	return OpenSQLiteStorage(toOpen, logger)
 }
 
 func (rs *SQLiteStorage) Close() {
@@ -77,7 +80,7 @@ func reqFromRow(
 		return nil, fmt.Errorf("id cannot be null")
 	}
 	reqDbId := strconv.FormatInt(db_id.Int64, 10)
-	
+
 	if db_host.Valid {
 		host = db_host.String
 	} else {
@@ -272,7 +275,7 @@ func wsFromRow(tx *sql.Tx, ms *SQLiteStorage, id sql.NullInt64, parent_request s
 	return wsm, nil
 }
 
-func addTagsToStorage(tx *sql.Tx, req *ProxyRequest) (error) {
+func addTagsToStorage(tx *sql.Tx, req *ProxyRequest) error {
 	// Save the tags
 	for _, tag := range req.Tags() {
 		var db_tagid sql.NullInt64
@@ -340,7 +343,7 @@ func deleteTags(tx *sql.Tx, dbid string) error {
 
 func cleanTags(tx *sql.Tx) error {
 	// Delete tags with no associated requests
-	
+
 	// not efficient if we have tons of tags, but whatever
 	stmt, err := tx.Prepare(`
     DELETE FROM tags WHERE id NOT IN (SELECT tagid FROM tagged);
@@ -378,7 +381,6 @@ func (ms *SQLiteStorage) saveNewRequest(tx *sql.Tx, req *ProxyRequest) error {
 	var rspid *string
 	var unmangledId *string
 
-
 	if req.ServerResponse != nil {
 		if req.ServerResponse.DbId == "" {
 			return errors.New("response has not been saved yet, cannot save request")
@@ -398,7 +400,7 @@ func (ms *SQLiteStorage) saveNewRequest(tx *sql.Tx, req *ProxyRequest) error {
 	} else {
 		unmangledId = nil
 	}
-	
+
 	stmt, err := tx.Prepare(`
     INSERT INTO requests (
             full_request,
@@ -478,7 +480,7 @@ func (ms *SQLiteStorage) updateRequest(tx *sql.Tx, req *ProxyRequest) error {
 	} else {
 		unmangledId = nil
 	}
-	
+
 	stmt, err := tx.Prepare(`
     UPDATE requests SET 
             full_request=?,
@@ -557,20 +559,20 @@ func (ms *SQLiteStorage) loadRequest(tx *sql.Tx, reqid string) (*ProxyRequest, e
 	var db_end_datetime sql.NullInt64
 
 	// err = tx.QueryRow(`
-    //     SELECT
-    //     id, full_request, response_id, unmangled_id, port, is_ssl, host, start_datetime, end_datetime
-    //     FROM requests WHERE id=?`, dbId).Scan(
-	err = tx.QueryRow(REQUEST_SELECT + " WHERE id=?", dbId).Scan(
-			&db_id,
-			&db_full_request,
-			&db_response_id,
-			&db_unmangled_id,
-			&db_port,
-			&db_is_ssl,
-			&db_host,
-			&db_start_datetime,
-			&db_end_datetime,
-		)
+	//     SELECT
+	//     id, full_request, response_id, unmangled_id, port, is_ssl, host, start_datetime, end_datetime
+	//     FROM requests WHERE id=?`, dbId).Scan(
+	err = tx.QueryRow(REQUEST_SELECT+" WHERE id=?", dbId).Scan(
+		&db_id,
+		&db_full_request,
+		&db_response_id,
+		&db_unmangled_id,
+		&db_port,
+		&db_is_ssl,
+		&db_host,
+		&db_start_datetime,
+		&db_end_datetime,
+	)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("Request with id %d does not exist", dbId)
 	} else if err != nil {
@@ -609,7 +611,7 @@ func (ms *SQLiteStorage) loadUnmangledRequest(tx *sql.Tx, reqid string) (*ProxyR
 	}
 
 	var db_unmangled_id sql.NullInt64
-	
+
 	err = tx.QueryRow("SELECT unmangled_id FROM requests WHERE id=?", dbId).Scan(&db_unmangled_id)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("request has no unmangled version")
@@ -624,7 +626,7 @@ func (ms *SQLiteStorage) loadUnmangledRequest(tx *sql.Tx, reqid string) (*ProxyR
 	return ms.loadRequest(tx, strconv.FormatInt(db_unmangled_id.Int64, 10))
 }
 
-func (ms *SQLiteStorage) DeleteRequest(reqid string) (error) {
+func (ms *SQLiteStorage) DeleteRequest(reqid string) error {
 	ms.mtx.Lock()
 	defer ms.mtx.Unlock()
 	tx, err := ms.dbConn.Begin()
@@ -640,7 +642,7 @@ func (ms *SQLiteStorage) DeleteRequest(reqid string) (error) {
 	return nil
 }
 
-func (ms *SQLiteStorage) deleteRequest(tx *sql.Tx, reqid string) (error) {
+func (ms *SQLiteStorage) deleteRequest(tx *sql.Tx, reqid string) error {
 	if reqid == "" {
 		return nil
 	}
@@ -837,16 +839,16 @@ func (ms *SQLiteStorage) loadResponse(tx *sql.Tx, rspid string) (*ProxyResponse,
 	if err != nil {
 		return nil, fmt.Errorf("Invalid response id: %s", rspid)
 	}
-	
+
 	var db_id sql.NullInt64
 	var db_full_response []byte
 	var db_unmangled_id sql.NullInt64
 
-	err = tx.QueryRow(RESPONSE_SELECT + " WHERE id=?", dbId).Scan(
-			&db_id,
-			&db_full_response,
-			&db_unmangled_id,
-		)
+	err = tx.QueryRow(RESPONSE_SELECT+" WHERE id=?", dbId).Scan(
+		&db_id,
+		&db_full_response,
+		&db_unmangled_id,
+	)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("Response with id %d does not exist", dbId)
 	} else if err != nil {
@@ -883,7 +885,7 @@ func (ms *SQLiteStorage) loadUnmangledResponse(tx *sql.Tx, rspid string) (*Proxy
 	}
 
 	var db_unmangled_id sql.NullInt64
-	
+
 	err = tx.QueryRow("SELECT unmangled_id FROM responses WHERE id=?", dbId).Scan(&db_unmangled_id)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("response has no unmangled version")
@@ -1030,7 +1032,7 @@ func (ms *SQLiteStorage) saveNewWSMessage(tx *sql.Tx, req *ProxyRequest, wsm *Pr
 	insertedId, _ = res.LastInsertId()
 	wsm.DbId = strconv.FormatInt(insertedId, 10)
 	return nil
-	
+
 }
 
 func (ms *SQLiteStorage) UpdateWSMessage(req *ProxyRequest, wsm *ProxyWSMessage) error {
@@ -1141,16 +1143,15 @@ func (ms *SQLiteStorage) loadWSMessage(tx *sql.Tx, wsmid string) (*ProxyWSMessag
 	var db_time_sent sql.NullInt64
 	var db_contents []byte
 
-
-	err = tx.QueryRow(WS_SELECT + " WHERE id=?", dbId).Scan(
-			&db_id,
-			&db_parent_request,
-			&db_unmangled_id,
-			&db_is_binary,
-			&db_direction,
-			&db_time_sent,
-			&db_contents,
-		)
+	err = tx.QueryRow(WS_SELECT+" WHERE id=?", dbId).Scan(
+		&db_id,
+		&db_parent_request,
+		&db_unmangled_id,
+		&db_is_binary,
+		&db_direction,
+		&db_time_sent,
+		&db_contents,
+	)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("Message with id %d does not exist", dbId)
 	} else if err != nil {
@@ -1197,7 +1198,7 @@ func (ms *SQLiteStorage) loadUnmangledWSMessage(tx *sql.Tx, wsmid string) (*Prox
 	}
 
 	var db_unmangled_id sql.NullInt64
-	
+
 	err = tx.QueryRow("SELECT unmangled_id FROM requests WHERE id=?", dbId).Scan(&db_unmangled_id)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("message has no unmangled version")
@@ -1403,7 +1404,7 @@ func (ms *SQLiteStorage) search(tx *sql.Tx, limit int64, args ...interface{}) ([
 			}
 		}
 	}
-	
+
 	// Can't optimize, just make a checker and do a naive implementation
 	checker, err := NewRequestChecker(args...)
 	if err != nil {
@@ -1432,7 +1433,7 @@ func (ms *SQLiteStorage) checkRequests(tx *sql.Tx, limit int64, checker RequestC
 	return ms.reqSearchHelper(tx, limit, checker, "")
 }
 
-func (ms *SQLiteStorage) SaveQuery(name string, query MessageQuery) (error) {
+func (ms *SQLiteStorage) SaveQuery(name string, query MessageQuery) error {
 	ms.mtx.Lock()
 	defer ms.mtx.Unlock()
 	tx, err := ms.dbConn.Begin()
@@ -1448,7 +1449,7 @@ func (ms *SQLiteStorage) SaveQuery(name string, query MessageQuery) (error) {
 	return nil
 }
 
-func (ms *SQLiteStorage) saveQuery(tx *sql.Tx, name string, query MessageQuery) (error) {
+func (ms *SQLiteStorage) saveQuery(tx *sql.Tx, name string, query MessageQuery) error {
 	strQuery, err := GoQueryToStrQuery(query)
 	if err != nil {
 		return fmt.Errorf("error creating string version of query: %s", err.Error())
@@ -1458,7 +1459,7 @@ func (ms *SQLiteStorage) saveQuery(tx *sql.Tx, name string, query MessageQuery) 
 	if err != nil {
 		return fmt.Errorf("error marshaling query to json: %s", err.Error())
 	}
-	
+
 	if err := ms.deleteQuery(tx, name); err != nil {
 		return err
 	}
@@ -1523,7 +1524,7 @@ func (ms *SQLiteStorage) loadQuery(tx *sql.Tx, name string) (MessageQuery, error
 	return retQuery, nil
 }
 
-func (ms *SQLiteStorage) DeleteQuery(name string) (error) {
+func (ms *SQLiteStorage) DeleteQuery(name string) error {
 	ms.mtx.Lock()
 	defer ms.mtx.Unlock()
 	tx, err := ms.dbConn.Begin()
@@ -1539,7 +1540,7 @@ func (ms *SQLiteStorage) DeleteQuery(name string) (error) {
 	return nil
 }
 
-func (ms *SQLiteStorage) deleteQuery(tx *sql.Tx, name string) (error) {
+func (ms *SQLiteStorage) deleteQuery(tx *sql.Tx, name string) error {
 	stmt, err := tx.Prepare(`DELETE FROM saved_contexts WHERE context_name=?;`)
 	if err != nil {
 		return fmt.Errorf("error preparing statement to insert request into database: %s", err.Error())
@@ -1602,4 +1603,3 @@ func (ms *SQLiteStorage) allSavedQueries(tx *sql.Tx) ([]*SavedQuery, error) {
 	}
 	return savedQueries, nil
 }
-

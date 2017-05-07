@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"log"
 	"runtime"
-	"strings"
 	"sort"
+	"strings"
 )
 
 type schemaUpdater func(tx *sql.Tx) error
@@ -110,19 +110,19 @@ SCHEMA 8 / INITIAL
 func schema8(tx *sql.Tx) error {
 	// Create a schema that is the same as pappy's last version
 
-	cmds := []string {
+	cmds := []string{
 
-	`
+		`
     CREATE TABLE schema_meta (
             version INTEGER NOT NULL
         );
     `,
 
-	`
+		`
     INSERT INTO "schema_meta" VALUES(8);
     `,
 
-	`
+		`
     CREATE TABLE responses (
         id             INTEGER   PRIMARY KEY  AUTOINCREMENT,
         full_response  BLOB  NOT NULL,
@@ -130,28 +130,28 @@ func schema8(tx *sql.Tx) error {
     );
     `,
 
-	`
+		`
     CREATE TABLE scope (
             filter_order    INTEGER  NOT NULL,
             filter_string   TEXT  NOT NULL
         );
     `,
 
-	`
+		`
     CREATE TABLE tags (
             id       INTEGER   PRIMARY KEY  AUTOINCREMENT,
             tag      TEXT      NOT NULL
         );
     `,
 
-	`
+		`
     CREATE TABLE tagged (
             reqid       INTEGER,
             tagid       INTEGER
         );
     `,
 
-	`
+		`
     CREATE TABLE "requests" (
             id                INTEGER   PRIMARY KEY  AUTOINCREMENT,
             full_request      BLOB      NOT NULL,
@@ -167,7 +167,7 @@ func schema8(tx *sql.Tx) error {
         );
     `,
 
-	`
+		`
     CREATE TABLE saved_contexts (
             id                INTEGER   PRIMARY KEY  AUTOINCREMENT,
             context_name      TEXT      UNIQUE,
@@ -175,7 +175,7 @@ func schema8(tx *sql.Tx) error {
         );
     `,
 
-	`
+		`
     CREATE TABLE websocket_messages (
             id                INTEGER   PRIMARY KEY  AUTOINCREMENT,
             parent_request    INTEGER   REFERENCES requests(id),
@@ -187,7 +187,7 @@ func schema8(tx *sql.Tx) error {
         );
     `,
 
-	`
+		`
     CREATE INDEX ind_start_time ON requests(start_datetime);
     `,
 	}
@@ -240,7 +240,7 @@ func pappyListToStrMessageQuery(f []string) (StrMessageQuery, error) {
 }
 
 type s9ScopeStr struct {
-	Order int64
+	Order  int64
 	Filter string
 }
 
@@ -260,8 +260,8 @@ func (ls s9ScopeSort) Less(i int, j int) bool {
 
 func schema9(tx *sql.Tx) error {
 	/*
-     Converts the floating point timestamps into integers representing nanoseconds from jan 1 1970
-     */
+	   Converts the floating point timestamps into integers representing nanoseconds from jan 1 1970
+	*/
 
 	// Rename the old requests table
 	if err := execute(tx, "ALTER TABLE requests RENAME TO requests_old"); err != nil {
@@ -289,13 +289,13 @@ func schema9(tx *sql.Tx) error {
         );
     `,
 
-    `
+		`
     INSERT INTO requests
     SELECT id, full_request, submitted, response_id, unmangled_id, port, is_ssl, host, plugin_data, 0, 0
     FROM requests_old
     `,
 
-	`
+		`
     CREATE TABLE websocket_messages (
             id                INTEGER   PRIMARY KEY  AUTOINCREMENT,
             parent_request    INTEGER   REFERENCES requests(id),
@@ -307,7 +307,7 @@ func schema9(tx *sql.Tx) error {
         );
     `,
 
-	`
+		`
     INSERT INTO websocket_messages
     SELECT id, parent_request, unmangled_id, is_binary, direction, 0, contents
     FROM websocket_messages_old
@@ -337,13 +337,13 @@ func schema9(tx *sql.Tx) error {
 
 		if startDT.Valid {
 			// Convert to nanoseconds
-			newStartDT = int64(startDT.Float64*1000000000)
+			newStartDT = int64(startDT.Float64 * 1000000000)
 		} else {
 			newStartDT = 0
 		}
 
 		if endDT.Valid {
-			newEndDT = int64(endDT.Float64*1000000000)
+			newEndDT = int64(endDT.Float64 * 1000000000)
 		} else {
 			newEndDT = 0
 		}
@@ -378,7 +378,7 @@ func schema9(tx *sql.Tx) error {
 
 		if sentDT.Valid {
 			// Convert to nanoseconds
-			newSentDT = int64(startDT.Float64*1000000000)
+			newSentDT = int64(startDT.Float64 * 1000000000)
 		} else {
 			newSentDT = 0
 		}

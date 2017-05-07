@@ -38,13 +38,7 @@ Then you can run puppy by running `puppy`. It will use the puppy binary in `~/$G
 
 Missing Features From Pappy
 ---------------------------
-Here's what Pappy can do that this can't:
-
-- The `http://pappy` interface
-- Upstream proxies
-- Commands taking multiple requests
-- Any and all documentation
-- The macro API is totally different
+All that's left is updating documentation!
 
 Need more info?
 ---------------

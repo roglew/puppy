@@ -190,4 +190,3 @@ func SignHost(ca tls.Certificate, hosts []string) (cert tls.Certificate, err err
 		PrivateKey:  certpriv,
 	}, nil
 }
-
