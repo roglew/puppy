@@ -44,7 +44,7 @@ func NewProxyMessageListener(logger *log.Logger, iproxy *InterceptingProxy) *Mes
 	l.AddHandler("removelistener", removeListenerHandler)
 	l.AddHandler("getlisteners", getListenersHandler)
 	l.AddHandler("loadcerts", loadCertificatesHandler)
-	l.AddHandler("setcerts", loadCertificatesHandler)
+	l.AddHandler("setcerts", setCertificatesHandler)
 	l.AddHandler("clearcerts", clearCertificatesHandler)
 	l.AddHandler("gencerts", generateCertificatesHandler)
 	l.AddHandler("genpemcerts", generatePEMCertificatesHandler)
@@ -1701,7 +1701,7 @@ func generateCertificatesHandler(b []byte, c net.Conn, logger *log.Logger, iprox
 		return
 	}
 
-    _, err := GenerateCACertsToDisk(mreq.KeyFile, mreq.CertFile)
+    _, err := GenerateCACertsToDisk(mreq.CertFile, mreq.KeyFile)
 	if err != nil {
 		ErrorResponse(c, err.Error())
 		return
