@@ -1,4 +1,4 @@
-package main
+package puppy
 
 import (
 	"crypto/rand"
@@ -9,9 +9,11 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+    "os"
 	"time"
 )
 
+// A certificate/private key pair
 type CAKeyPair struct {
 	Certificate []byte
 	PrivateKey  *rsa.PrivateKey
@@ -23,6 +25,7 @@ func bigIntHash(n *big.Int) []byte {
 	return h.Sum(nil)
 }
 
+// GenerateCACerts generates a random CAKeyPair
 func GenerateCACerts() (*CAKeyPair, error) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -65,6 +68,37 @@ func GenerateCACerts() (*CAKeyPair, error) {
 	}, nil
 }
 
+// Generate a pair of certificates and write them to the disk. Returns the generated keypair
+func GenerateCACertsToDisk(CertificateFile string, PrivateKeyFile string) (*CAKeyPair, error) {
+	pair, err := GenerateCACerts()
+	if err != nil {
+		return nil, err
+	}
+
+	pkeyFile, err := os.OpenFile(PrivateKeyFile, os.O_RDWR|os.O_CREATE, 0600)
+	if err != nil {
+		return nil, err
+	}
+	pkeyFile.Write(pair.PrivateKeyPEM())
+	if err := pkeyFile.Close(); err != nil {
+		return nil, err
+	}
+
+	certFile, err := os.OpenFile(CertificateFile, os.O_RDWR|os.O_CREATE, 0600)
+	if err != nil {
+		return nil, err
+	}
+
+	certFile.Write(pair.CACertPEM())
+	if err := certFile.Close(); err != nil {
+		return nil, err
+	}
+
+    return pair, nil
+}
+
+
+// PrivateKeyPEM returns the private key of the CAKeyPair PEM encoded
 func (pair *CAKeyPair) PrivateKeyPEM() []byte {
 	return pem.EncodeToMemory(
 		&pem.Block{
@@ -74,6 +108,7 @@ func (pair *CAKeyPair) PrivateKeyPEM() []byte {
 	)
 }
 
+// PrivateKeyPEM returns the CA cert of the CAKeyPair PEM encoded
 func (pair *CAKeyPair) CACertPEM() []byte {
 	return pem.EncodeToMemory(
 		&pem.Block{

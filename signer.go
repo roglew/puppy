@@ -1,4 +1,4 @@
-package main
+package puppy
 
 /*
 Copyright (c) 2012 Elazar Leibovich. All rights reserved.
@@ -56,14 +56,14 @@ import (
 counterecryptor.go
 */
 
-type CounterEncryptorRand struct {
+type counterEncryptorRand struct {
 	cipher  cipher.Block
 	counter []byte
 	rand    []byte
 	ix      int
 }
 
-func NewCounterEncryptorRandFromKey(key interface{}, seed []byte) (r CounterEncryptorRand, err error) {
+func newCounterEncryptorRandFromKey(key interface{}, seed []byte) (r counterEncryptorRand, err error) {
 	var keyBytes []byte
 	switch key := key.(type) {
 	case *rsa.PrivateKey:
@@ -85,14 +85,14 @@ func NewCounterEncryptorRandFromKey(key interface{}, seed []byte) (r CounterEncr
 	return
 }
 
-func (c *CounterEncryptorRand) Seed(b []byte) {
+func (c *counterEncryptorRand) Seed(b []byte) {
 	if len(b) != len(c.counter) {
 		panic("SetCounter: wrong counter size")
 	}
 	copy(c.counter, b)
 }
 
-func (c *CounterEncryptorRand) refill() {
+func (c *counterEncryptorRand) refill() {
 	c.cipher.Encrypt(c.rand, c.counter)
 	for i := 0; i < len(c.counter); i++ {
 		if c.counter[i]++; c.counter[i] != 0 {
@@ -102,7 +102,7 @@ func (c *CounterEncryptorRand) refill() {
 	c.ix = 0
 }
 
-func (c *CounterEncryptorRand) Read(b []byte) (n int, err error) {
+func (c *counterEncryptorRand) Read(b []byte) (n int, err error) {
 	if c.ix == len(c.rand) {
 		c.refill()
 	}
@@ -137,7 +137,7 @@ func hashSortedBigInt(lst []string) *big.Int {
 
 var goproxySignerVersion = ":goroxy1"
 
-func SignHost(ca tls.Certificate, hosts []string) (cert tls.Certificate, err error) {
+func signHost(ca tls.Certificate, hosts []string) (cert tls.Certificate, err error) {
 	var x509ca *x509.Certificate
 
 	// Use the provided ca and not the global GoproxyCa for certificate generation.
@@ -173,8 +173,8 @@ func SignHost(ca tls.Certificate, hosts []string) (cert tls.Certificate, err err
 			template.DNSNames = append(template.DNSNames, h)
 		}
 	}
-	var csprng CounterEncryptorRand
-	if csprng, err = NewCounterEncryptorRandFromKey(ca.PrivateKey, hash); err != nil {
+	var csprng counterEncryptorRand
+	if csprng, err = newCounterEncryptorRandFromKey(ca.PrivateKey, hash); err != nil {
 		return
 	}
 	var certpriv *rsa.PrivateKey

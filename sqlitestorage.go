@@ -1,4 +1,4 @@
-package main
+package puppy
 
 import (
 	"database/sql"
@@ -15,9 +15,9 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-var REQUEST_SELECT string = "SELECT id, full_request, response_id, unmangled_id, port, is_ssl, host, start_datetime, end_datetime FROM requests"
-var RESPONSE_SELECT string = "SELECT id, full_response, unmangled_id FROM responses"
-var WS_SELECT string = "SELECT id, parent_request, unmangled_id, is_binary, direction, time_sent, contents FROM websocket_messages"
+var request_select string = "SELECT id, full_request, response_id, unmangled_id, port, is_ssl, host, start_datetime, end_datetime FROM requests"
+var response_select string = "SELECT id, full_response, unmangled_id FROM responses"
+var ws_select string = "SELECT id, parent_request, unmangled_id, is_binary, direction, time_sent, contents FROM websocket_messages"
 
 var inmemIdCounter = IdCounter()
 
@@ -223,7 +223,6 @@ func rspFromRow(tx *sql.Tx, ms *SQLiteStorage, id sql.NullInt64, db_full_respons
 	rsp.DbId = strconv.FormatInt(id.Int64, 10)
 
 	if db_unmangled_id.Valid {
-		MainLogger.Println(db_unmangled_id.Int64)
 		unmangledRsp, err := ms.loadResponse(tx, strconv.FormatInt(db_unmangled_id.Int64, 10))
 		if err != nil {
 			return nil, fmt.Errorf("unable to load unmangled response for rspid=%d: %s", id.Int64, err.Error())
@@ -562,7 +561,7 @@ func (ms *SQLiteStorage) loadRequest(tx *sql.Tx, reqid string) (*ProxyRequest, e
 	//     SELECT
 	//     id, full_request, response_id, unmangled_id, port, is_ssl, host, start_datetime, end_datetime
 	//     FROM requests WHERE id=?`, dbId).Scan(
-	err = tx.QueryRow(REQUEST_SELECT+" WHERE id=?", dbId).Scan(
+	err = tx.QueryRow(request_select+" WHERE id=?", dbId).Scan(
 		&db_id,
 		&db_full_request,
 		&db_response_id,
@@ -844,7 +843,7 @@ func (ms *SQLiteStorage) loadResponse(tx *sql.Tx, rspid string) (*ProxyResponse,
 	var db_full_response []byte
 	var db_unmangled_id sql.NullInt64
 
-	err = tx.QueryRow(RESPONSE_SELECT+" WHERE id=?", dbId).Scan(
+	err = tx.QueryRow(response_select+" WHERE id=?", dbId).Scan(
 		&db_id,
 		&db_full_response,
 		&db_unmangled_id,
@@ -1143,7 +1142,7 @@ func (ms *SQLiteStorage) loadWSMessage(tx *sql.Tx, wsmid string) (*ProxyWSMessag
 	var db_time_sent sql.NullInt64
 	var db_contents []byte
 
-	err = tx.QueryRow(WS_SELECT+" WHERE id=?", dbId).Scan(
+	err = tx.QueryRow(ws_select+" WHERE id=?", dbId).Scan(
 		&db_id,
 		&db_parent_request,
 		&db_unmangled_id,
@@ -1314,7 +1313,7 @@ func (ms *SQLiteStorage) requestKeys(tx *sql.Tx) ([]string, error) {
 }
 
 func (ms *SQLiteStorage) reqSearchHelper(tx *sql.Tx, limit int64, checker RequestChecker, sqlTail string) ([]*ProxyRequest, error) {
-	rows, err := tx.Query(REQUEST_SELECT + sqlTail + " ORDER BY start_datetime DESC;")
+	rows, err := tx.Query(request_select + sqlTail + " ORDER BY start_datetime DESC;")
 	if err != nil {
 		return nil, errors.New("error with sql query: " + err.Error())
 	}
@@ -1450,7 +1449,7 @@ func (ms *SQLiteStorage) SaveQuery(name string, query MessageQuery) error {
 }
 
 func (ms *SQLiteStorage) saveQuery(tx *sql.Tx, name string, query MessageQuery) error {
-	strQuery, err := GoQueryToStrQuery(query)
+	strQuery, err := MsgQueryToStrQuery(query)
 	if err != nil {
 		return fmt.Errorf("error creating string version of query: %s", err.Error())
 	}
@@ -1516,7 +1515,7 @@ func (ms *SQLiteStorage) loadQuery(tx *sql.Tx, name string) (MessageQuery, error
 		return nil, err
 	}
 
-	retQuery, err := StrQueryToGoQuery(strRetQuery)
+	retQuery, err := StrQueryToMsgQuery(strRetQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -1590,7 +1589,7 @@ func (ms *SQLiteStorage) allSavedQueries(tx *sql.Tx) ([]*SavedQuery, error) {
 			var strQuery StrMessageQuery
 			err = json.Unmarshal([]byte(queryStr.String), &strQuery)
 
-			goQuery, err := StrQueryToGoQuery(strQuery)
+			goQuery, err := StrQueryToMsgQuery(strQuery)
 			if err != nil {
 				return nil, err
 			}

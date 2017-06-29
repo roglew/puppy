@@ -1,13 +1,12 @@
-package main
+package puppy
 
 import (
 	"errors"
 	"fmt"
 )
 
+// An interface that represents something that can be used to store data from the proxy
 type MessageStorage interface {
-	// NOTE: Load func responsible for loading dependent messages, delte function responsible for deleting dependent messages
-	//       if it takes an ID, the storage is responsible for dependent messages
 
 	// Close the storage
 	Close()
@@ -18,8 +17,9 @@ type MessageStorage interface {
 	SaveNewRequest(req *ProxyRequest) error
 	// Load a request given a unique id
 	LoadRequest(reqid string) (*ProxyRequest, error)
+    // Load the unmangled version of a request given a unique id
 	LoadUnmangledRequest(reqid string) (*ProxyRequest, error)
-	// Delete a request
+	// Delete a request given a unique id
 	DeleteRequest(reqid string) error
 
 	// Update an existing response in the storage. Requires that it has already been saved
@@ -28,21 +28,23 @@ type MessageStorage interface {
 	SaveNewResponse(rsp *ProxyResponse) error
 	// Load a response given a unique id
 	LoadResponse(rspid string) (*ProxyResponse, error)
+    // Load the unmangled version of a response given a unique id
 	LoadUnmangledResponse(rspid string) (*ProxyResponse, error)
-	// Delete a response
+	// Delete a response given a unique id
 	DeleteResponse(rspid string) error
 
 	// Update an existing websocket message in the storage. Requires that it has already been saved
 	UpdateWSMessage(req *ProxyRequest, wsm *ProxyWSMessage) error
 	// Save a new instance of the websocket message in the storage regardless of if it has already been saved
 	SaveNewWSMessage(req *ProxyRequest, wsm *ProxyWSMessage) error
-	// Load a websocket given a unique id
+	// Load a websocket message given a unique id
 	LoadWSMessage(wsmid string) (*ProxyWSMessage, error)
+    // Load the unmangled version of a websocket message given a unique id
 	LoadUnmangledWSMessage(wsmid string) (*ProxyWSMessage, error)
-	// Delete a WSMessage
+	// Delete a websocket message given a unique id
 	DeleteWSMessage(wsmid string) error
 
-	// Get list of all the request keys
+	// Get list of the keys for all of the stored requests
 	RequestKeys() ([]string, error)
 
 	// A function to perform a search of requests in the storage. Same arguments as NewRequestChecker
@@ -51,56 +53,30 @@ type MessageStorage interface {
 	// A function to naively check every function in storage with the given function and return the ones that match
 	CheckRequests(limit int64, checker RequestChecker) ([]*ProxyRequest, error)
 
-	// Same as Search() but returns the IDs of the requests instead
-	// If Search() starts causing memory errors and I can't assume all the matching requests will fit in memory, I'll implement this or something
-	//SearchIDs(args ...interface{}) ([]string, error)
-
-	// Query functions
+	// Return a list of all the queries stored in the MessageStorage
 	AllSavedQueries() ([]*SavedQuery, error)
+    // Save a query in the storage with a given name. If the name is already in storage, it should be overwritten
 	SaveQuery(name string, query MessageQuery) error
+    // Load a query by name from the storage
 	LoadQuery(name string) (MessageQuery, error)
+    // Delete a query by name from the storage
 	DeleteQuery(name string) error
 }
 
+// An error to be returned if a query is not supported
 const QueryNotSupported = ConstErr("custom query not supported")
 
-type ReqSort []*ProxyRequest
-
+// A type representing a search query that is stored in a MessageStorage
 type SavedQuery struct {
 	Name  string
 	Query MessageQuery
-}
-
-func (reql ReqSort) Len() int {
-	return len(reql)
-}
-
-func (reql ReqSort) Swap(i int, j int) {
-	reql[i], reql[j] = reql[j], reql[i]
-}
-
-func (reql ReqSort) Less(i int, j int) bool {
-	return reql[j].StartDatetime.After(reql[i].StartDatetime)
-}
-
-type WSSort []*ProxyWSMessage
-
-func (wsml WSSort) Len() int {
-	return len(wsml)
-}
-
-func (wsml WSSort) Swap(i int, j int) {
-	wsml[i], wsml[j] = wsml[j], wsml[i]
-}
-
-func (wsml WSSort) Less(i int, j int) bool {
-	return wsml[j].Timestamp.After(wsml[i].Timestamp)
 }
 
 /*
 General storage functions
 */
 
+// Save a new request and new versions of all its dependant messages (response, websocket messages, and unmangled versions of everything).
 func SaveNewRequest(ms MessageStorage, req *ProxyRequest) error {
 	if req.ServerResponse != nil {
 		if err := SaveNewResponse(ms, req.ServerResponse); err != nil {
@@ -130,6 +106,7 @@ func SaveNewRequest(ms MessageStorage, req *ProxyRequest) error {
 	return nil
 }
 
+// Update a request and all its dependent messages. If the request has a DbId it will be updated, otherwise it will be inserted into the database and have its DbId updated. Same for all dependent messages
 func UpdateRequest(ms MessageStorage, req *ProxyRequest) error {
 	if req.ServerResponse != nil {
 		if err := UpdateResponse(ms, req.ServerResponse); err != nil {
@@ -165,6 +142,7 @@ func UpdateRequest(ms MessageStorage, req *ProxyRequest) error {
 	return nil
 }
 
+// Save a new response/unmangled response to the message storage regardless of the existence of a DbId
 func SaveNewResponse(ms MessageStorage, rsp *ProxyResponse) error {
 	if rsp.Unmangled != nil {
 		if rsp.DbId != "" && rsp.DbId == rsp.Unmangled.DbId {
@@ -178,6 +156,7 @@ func SaveNewResponse(ms MessageStorage, rsp *ProxyResponse) error {
 	return ms.SaveNewResponse(rsp)
 }
 
+// Update a response and its unmangled version in the database. If it has a DbId, it will be updated, otherwise a new version will be saved in the database
 func UpdateResponse(ms MessageStorage, rsp *ProxyResponse) error {
 	if rsp.Unmangled != nil {
 		if rsp.DbId != "" && rsp.DbId == rsp.Unmangled.DbId {
@@ -195,6 +174,7 @@ func UpdateResponse(ms MessageStorage, rsp *ProxyResponse) error {
 	}
 }
 
+// Save a new websocket emssage/unmangled version to the message storage regardless of the existence of a DbId
 func SaveNewWSMessage(ms MessageStorage, req *ProxyRequest, wsm *ProxyWSMessage) error {
 	if wsm.Unmangled != nil {
 		if wsm.DbId != "" && wsm.DbId == wsm.Unmangled.DbId {
@@ -208,6 +188,7 @@ func SaveNewWSMessage(ms MessageStorage, req *ProxyRequest, wsm *ProxyWSMessage)
 	return ms.SaveNewWSMessage(req, wsm)
 }
 
+// Update a websocket message and its unmangled version in the database. If it has a DbId, it will be updated, otherwise a new version will be saved in the database
 func UpdateWSMessage(ms MessageStorage, req *ProxyRequest, wsm *ProxyWSMessage) error {
 	if wsm.Unmangled != nil {
 		if wsm.DbId != "" && wsm.Unmangled.DbId == wsm.DbId {

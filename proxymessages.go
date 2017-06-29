@@ -1,4 +1,4 @@
-package main
+package puppy
 
 import (
 	"bufio"
@@ -11,7 +11,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,6 +20,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// Creates a MessageListener that implements the default puppy handlers. See the message docs for more info
 func NewProxyMessageListener(logger *log.Logger, iproxy *InterceptingProxy) *MessageListener {
 	l := NewMessageListener(logger, iproxy)
 
@@ -29,6 +29,7 @@ func NewProxyMessageListener(logger *log.Logger, iproxy *InterceptingProxy) *Mes
 	l.AddHandler("savenew", saveNewHandler)
 	l.AddHandler("storagequery", storageQueryHandler)
 	l.AddHandler("validatequery", validateQueryHandler)
+	l.AddHandler("checkrequest", checkRequestHandler)
 	l.AddHandler("setscope", setScopeHandler)
 	l.AddHandler("viewscope", viewScopeHandler)
 	l.AddHandler("addtag", addTagHandler)
@@ -57,7 +58,7 @@ func NewProxyMessageListener(logger *log.Logger, iproxy *InterceptingProxy) *Mes
 	return l
 }
 
-// Message input structs
+// JSON data representing a ProxyRequest
 type RequestJSON struct {
 	DestHost   string
 	DestPort   int
@@ -79,6 +80,7 @@ type RequestJSON struct {
 	DbId       string           `json:"DbId,omitempty"`
 }
 
+// JSON data representing a ProxyResponse
 type ResponseJSON struct {
 	ProtoMajor int
 	ProtoMinor int
@@ -92,6 +94,7 @@ type ResponseJSON struct {
 	DbId      string
 }
 
+// JSON data representing a ProxyWSMessage
 type WSMessageJSON struct {
 	Message   string
 	IsBinary  bool
@@ -102,6 +105,7 @@ type WSMessageJSON struct {
 	DbId      string
 }
 
+// Check that the RequestJSON contains valid data
 func (reqd *RequestJSON) Validate() error {
 	if reqd.DestHost == "" {
 		return errors.New("request is missing target host")
@@ -114,6 +118,7 @@ func (reqd *RequestJSON) Validate() error {
 	return nil
 }
 
+// Convert RequestJSON into a ProxyRequest
 func (reqd *RequestJSON) Parse() (*ProxyRequest, error) {
 	if err := reqd.Validate(); err != nil {
 		return nil, err
@@ -187,6 +192,7 @@ func (reqd *RequestJSON) Parse() (*ProxyRequest, error) {
 	return req, nil
 }
 
+// Convert a ProxyRequest into JSON data. If headersOnly is true, the JSON data will only contain the headers and metadata of the message
 func NewRequestJSON(req *ProxyRequest, headersOnly bool) *RequestJSON {
 
 	newHeaders := make(map[string][]string)
@@ -243,10 +249,12 @@ func NewRequestJSON(req *ProxyRequest, headersOnly bool) *RequestJSON {
 	return ret
 }
 
+// Ensure that response JSON data is valid
 func (rspd *ResponseJSON) Validate() error {
 	return nil
 }
 
+// Convert response JSON data into a ProxyResponse
 func (rspd *ResponseJSON) Parse() (*ProxyResponse, error) {
 	if err := rspd.Validate(); err != nil {
 		return nil, err
@@ -295,6 +303,7 @@ func (rspd *ResponseJSON) Parse() (*ProxyResponse, error) {
 	return rsp, nil
 }
 
+// Serialize a ProxyResponse into JSON data. If headersOnly is true, the JSON data will only contain the headers and metadata of the message
 func NewResponseJSON(rsp *ProxyResponse, headersOnly bool) *ResponseJSON {
 	newHeaders := make(map[string][]string)
 	for k, vs := range rsp.Header {
@@ -331,6 +340,7 @@ func NewResponseJSON(rsp *ProxyResponse, headersOnly bool) *ResponseJSON {
 	return ret
 }
 
+// Parse websocket message JSON data into a ProxyWSMEssage
 func (wsmd *WSMessageJSON) Parse() (*ProxyWSMessage, error) {
 	var Direction int
 	if wsmd.ToServer {
@@ -371,6 +381,7 @@ func (wsmd *WSMessageJSON) Parse() (*ProxyWSMessage, error) {
 	return retData, nil
 }
 
+// Serialize a websocket message into JSON data
 func NewWSMessageJSON(wsm *ProxyWSMessage) *WSMessageJSON {
 	isBinary := false
 	if wsm.Type == websocket.BinaryMessage {
@@ -399,8 +410,7 @@ func NewWSMessageJSON(wsm *ProxyWSMessage) *WSMessageJSON {
 	return ret
 }
 
-// Functions to remove extra metadata from submitted messages
-
+// Clears metadata (start/end time, DbId) and dependent message data (response, websocket messages, and unmangled versions) from the RequestJSON
 func CleanReqJSON(req *RequestJSON) {
 	req.StartTime = 0
 	req.EndTime = 0
@@ -410,11 +420,13 @@ func CleanReqJSON(req *RequestJSON) {
 	req.DbId = ""
 }
 
+// Clears metadata (DbId) and dependent message data (unmangled version) from the ResponseJSON
 func CleanRspJSON(rsp *ResponseJSON) {
 	rsp.Unmangled = nil
 	rsp.DbId = ""
 }
 
+// Clears metadata (timestamp, DbId) and dependent message data (unmangled version) from the WSMessageJSON
 func CleanWSJSON(wsm *WSMessageJSON) {
 	wsm.Timestamp = 0
 	wsm.Unmangled = nil
@@ -461,7 +473,6 @@ func submitHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Interceptin
 		return
 	}
 
-	CleanReqJSON(mreq.Request)
 	req, err := mreq.Request.Parse()
 	if err != nil {
 		ErrorResponse(c, fmt.Sprintf("error parsing http request: %s", err.Error()))
@@ -499,7 +510,7 @@ func submitHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Interceptin
 SaveNew
 */
 type saveNewMessage struct {
-	Request RequestJSON
+	Request *RequestJSON
 	Storage int
 }
 
@@ -604,7 +615,7 @@ func storageQueryHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Inter
 		}
 	} else {
 		logger.Println("Search query is multple sets of arguments, creating checker and checking naively...")
-		goQuery, err := StrQueryToGoQuery(mreq.Query)
+		goQuery, err := StrQueryToMsgQuery(mreq.Query)
 		if err != nil {
 			ErrorResponse(c, err.Error())
 			return
@@ -648,7 +659,7 @@ func validateQueryHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Inte
 		return
 	}
 
-	goQuery, err := StrQueryToGoQuery(mreq.Query)
+	goQuery, err := StrQueryToMsgQuery(mreq.Query)
 	if err != nil {
 		ErrorResponse(c, err.Error())
 		return
@@ -660,6 +671,53 @@ func validateQueryHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Inte
 		return
 	}
 	MessageResponse(c, &successResult{Success: true})
+}
+
+/*
+CheckRequest
+*/
+
+type checkRequestMessage struct {
+	Query   StrMessageQuery
+	Request *RequestJSON
+}
+
+type checkRequestResponse struct {
+	Result  bool
+	Success bool
+}
+
+func checkRequestHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *InterceptingProxy) {
+	mreq := checkRequestMessage{}
+	if err := json.Unmarshal(b, &mreq); err != nil {
+		ErrorResponse(c, "error parsing query message")
+		return
+	}
+
+	req, err := mreq.Request.Parse()
+	if err != nil {
+		ErrorResponse(c, fmt.Sprintf("error parsing http request: %s", err.Error()))
+		return
+	}
+
+	goQuery, err := StrQueryToMsgQuery(mreq.Query)
+	if err != nil {
+		ErrorResponse(c, err.Error())
+		return
+	}
+
+	checker, err := CheckerFromMessageQuery(goQuery)
+	if err != nil {
+		ErrorResponse(c, err.Error())
+		return
+	}
+
+	result := &checkRequestResponse{
+		Success: true,
+		Result:  checker(req),
+	}
+
+	MessageResponse(c, result)
 }
 
 /*
@@ -678,7 +736,7 @@ func setScopeHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Intercept
 		return
 	}
 
-	goQuery, err := StrQueryToGoQuery(mreq.Query)
+	goQuery, err := StrQueryToMsgQuery(mreq.Query)
 	if err != nil {
 		ErrorResponse(c, err.Error())
 		return
@@ -719,7 +777,7 @@ func viewScopeHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Intercep
 	}
 
 	var err error
-	strQuery, err := GoQueryToStrQuery(scopeQuery)
+	strQuery, err := MsgQueryToStrQuery(scopeQuery)
 	if err != nil {
 		ErrorResponse(c, err.Error())
 		return
@@ -859,7 +917,6 @@ func clearTagHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Intercept
 	}
 
 	req.ClearTags()
-	MainLogger.Println(req.Tags())
 	err = UpdateRequest(storage, req)
 	if err != nil {
 		ErrorResponse(c, fmt.Sprintf("error saving request: %s", err.Error()))
@@ -1039,7 +1096,7 @@ func interceptHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Intercep
 
 			return ret, nil
 		}
-		reqSub = iproxy.AddReqIntSub(reqIntFunc)
+		reqSub = iproxy.AddReqInterceptor(reqIntFunc)
 	}
 
 	var rspSub *RspIntSub = nil
@@ -1096,7 +1153,7 @@ func interceptHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Intercep
 			}
 			return ret, nil
 		}
-		rspSub = iproxy.AddRspIntSub(rspIntFunc)
+		rspSub = iproxy.AddRspInterceptor(rspIntFunc)
 	}
 
 	var wsSub *WSIntSub = nil
@@ -1163,23 +1220,23 @@ func interceptHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Intercep
 			}
 			return ret, nil
 		}
-		wsSub = iproxy.AddWSIntSub(wsIntFunc)
+		wsSub = iproxy.AddWSInterceptor(wsIntFunc)
 	}
 
 	closeAll := func() {
 		if reqSub != nil {
 			// close req sub
-			iproxy.RemoveReqIntSub(reqSub)
+			iproxy.RemoveReqInterceptor(reqSub)
 		}
 
 		if rspSub != nil {
 			// close rsp sub
-			iproxy.RemoveRspIntSub(rspSub)
+			iproxy.RemoveRspInterceptor(rspSub)
 		}
 
 		if wsSub != nil {
 			// close websocket sub
-			iproxy.RemoveWSIntSub(wsSub)
+			iproxy.RemoveWSInterceptor(wsSub)
 		}
 
 		// Close all pending requests
@@ -1298,7 +1355,7 @@ func allSavedQueriesHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *In
 			Name:  q.Name,
 			Query: nil,
 		}
-		sq, err := GoQueryToStrQuery(q.Query)
+		sq, err := MsgQueryToStrQuery(q.Query)
 		if err == nil {
 			strSavedQuery.Query = sq
 			savedQueries = append(savedQueries, strSavedQuery)
@@ -1340,7 +1397,7 @@ func saveQueryHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Intercep
 		return
 	}
 
-	goQuery, err := StrQueryToGoQuery(mreq.Query)
+	goQuery, err := StrQueryToMsgQuery(mreq.Query)
 	if err != nil {
 		ErrorResponse(c, err.Error())
 		return
@@ -1399,7 +1456,7 @@ func loadQueryHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Intercep
 		return
 	}
 
-	strQuery, err := GoQueryToStrQuery(query)
+	strQuery, err := MsgQueryToStrQuery(query)
 	if err != nil {
 		ErrorResponse(c, err.Error())
 		return
@@ -1458,6 +1515,11 @@ type activeListener struct {
 type addListenerMessage struct {
 	Type string
 	Addr string
+
+	TransparentMode bool
+	DestHost        string
+	DestPort        int
+	DestUseTLS      bool
 }
 
 type addListenerResult struct {
@@ -1496,7 +1558,12 @@ func addListenerHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Interc
 		return
 	}
 
-	iproxy.AddListener(listener)
+	if mreq.TransparentMode {
+		iproxy.AddTransparentListener(listener, mreq.DestHost,
+			mreq.DestPort, mreq.DestUseTLS)
+	} else {
+		iproxy.AddListener(listener)
+	}
 
 	alistener := &activeListener{
 		Id:       getNextMsgListenerId(),
@@ -1581,13 +1648,12 @@ func loadCertificatesHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *I
 		return
 	}
 
-	caCert, err := tls.LoadX509KeyPair(mreq.CertificateFile, mreq.KeyFile)
+	err := iproxy.LoadCACertificates(mreq.CertificateFile, mreq.KeyFile)
 	if err != nil {
 		ErrorResponse(c, err.Error())
 		return
 	}
 
-	iproxy.SetCACertificate(&caCert)
 	MessageResponse(c, &successResult{Success: true})
 }
 
@@ -1635,30 +1701,8 @@ func generateCertificatesHandler(b []byte, c net.Conn, logger *log.Logger, iprox
 		return
 	}
 
-	pair, err := GenerateCACerts()
+    _, err := GenerateCACertsToDisk(mreq.KeyFile, mreq.CertFile)
 	if err != nil {
-		ErrorResponse(c, "error generating certificates: "+err.Error())
-		return
-	}
-
-	pkeyFile, err := os.OpenFile(mreq.KeyFile, os.O_RDWR|os.O_CREATE, 0600)
-	if err != nil {
-		ErrorResponse(c, "could not save private key: "+err.Error())
-		return
-	}
-	pkeyFile.Write(pair.PrivateKeyPEM())
-	if err := pkeyFile.Close(); err != nil {
-		ErrorResponse(c, err.Error())
-		return
-	}
-
-	certFile, err := os.OpenFile(mreq.CertFile, os.O_RDWR|os.O_CREATE, 0600)
-	if err != nil {
-		ErrorResponse(c, "could not save private key: "+err.Error())
-		return
-	}
-	certFile.Write(pair.CACertPEM())
-	if err := certFile.Close(); err != nil {
 		ErrorResponse(c, err.Error())
 		return
 	}

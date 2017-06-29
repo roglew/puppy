@@ -1,4 +1,4 @@
-package main
+package puppy
 
 import (
 	"bufio"
@@ -14,8 +14,10 @@ import (
 Message Server
 */
 
-type MessageHandler func([]byte, net.Conn, *log.Logger, *InterceptingProxy)
+// A handler to handle a JSON message
+type MessageHandler func(message []byte, conn net.Conn, logger *log.Logger, iproxy *InterceptingProxy)
 
+// A listener that handles reading JSON messages and sending them to the correct handler
 type MessageListener struct {
 	handlers map[string]MessageHandler
 	iproxy   *InterceptingProxy
@@ -31,6 +33,7 @@ type errorMessage struct {
 	Reason  string
 }
 
+// NewMessageListener creates a new message listener associated with the given intercepting proxy
 func NewMessageListener(l *log.Logger, iproxy *InterceptingProxy) *MessageListener {
 	m := &MessageListener{
 		handlers: make(map[string]MessageHandler),
@@ -40,6 +43,7 @@ func NewMessageListener(l *log.Logger, iproxy *InterceptingProxy) *MessageListen
 	return m
 }
 
+// AddHandler will have the listener call the given handler when the "Command" parameter matches the given value
 func (l *MessageListener) AddHandler(command string, handler MessageHandler) {
 	l.handlers[strings.ToLower(command)] = handler
 }
@@ -60,6 +64,7 @@ func (l *MessageListener) Handle(message []byte, conn net.Conn) error {
 	return nil
 }
 
+// Serve will have the listener serve messages on the given listener
 func (l *MessageListener) Serve(nl net.Listener) {
 	for {
 		conn, err := nl.Accept()
@@ -88,6 +93,7 @@ func (l *MessageListener) Serve(nl net.Listener) {
 	}
 }
 
+// Error response writes an error message to the given writer
 func ErrorResponse(w io.Writer, reason string) {
 	var m errorMessage
 	m.Success = false
@@ -95,16 +101,17 @@ func ErrorResponse(w io.Writer, reason string) {
 	MessageResponse(w, m)
 }
 
+// MessageResponse writes a response to a given writer
 func MessageResponse(w io.Writer, m interface{}) {
 	b, err := json.Marshal(&m)
 	if err != nil {
 		panic(err)
 	}
-	MainLogger.Printf("< %s\n", string(b))
 	w.Write(b)
 	w.Write([]byte("\n"))
 }
 
+// ReadMessage reads a message from the given reader
 func ReadMessage(r *bufio.Reader) ([]byte, error) {
 	m, err := r.ReadBytes('\n')
 	if err != nil {

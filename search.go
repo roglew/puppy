@@ -1,4 +1,4 @@
-package main
+package puppy
 
 import (
 	"errors"
@@ -14,8 +14,8 @@ import (
 type SearchField int
 type StrComparer int
 
-type StrFieldGetter func(req *ProxyRequest) ([]string, error)
-type KvFieldGetter func(req *ProxyRequest) ([]*PairValue, error)
+type strFieldGetter func(req *ProxyRequest) ([]string, error)
+type kvFieldGetter func(req *ProxyRequest) ([]*PairValue, error)
 
 type RequestChecker func(req *ProxyRequest) bool
 
@@ -37,6 +37,7 @@ const (
 	FieldPath
 	FieldURL
 	FieldStatusCode
+	FieldTag
 
 	FieldBothParam
 	FieldURLParam
@@ -44,7 +45,6 @@ const (
 	FieldResponseCookie
 	FieldRequestCookie
 	FieldBothCookie
-	FieldTag
 
 	FieldAfter
 	FieldBefore
@@ -72,13 +72,17 @@ type PairValue struct {
 	value string
 }
 
-type QueryPhrase [][]interface{} // A list of queries. Will match if any queries match the request
-type MessageQuery []QueryPhrase  // A list of phrases. Will match if all the phrases match the request
+// A list of queries. Will match if any queries match the request
+type QueryPhrase [][]interface{}
+// A list of phrases. Will match if all the phrases match the request
+type MessageQuery []QueryPhrase
 
+// A list of queries in string form. Will match if any queries match the request
 type StrQueryPhrase [][]string
+// A list of phrases in string form. Will match if all the phrases match the request
 type StrMessageQuery []StrQueryPhrase
 
-// Return a function that returns whether a request matches the given condition
+// Return a function that returns whether a request matches the given conditions
 func NewRequestChecker(args ...interface{}) (RequestChecker, error) {
 	// Generates a request checker from the given search arguments
 	if len(args) == 0 {
@@ -94,7 +98,7 @@ func NewRequestChecker(args ...interface{}) (RequestChecker, error) {
 
 	// Normal string fields
 	case FieldAll, FieldRequestBody, FieldResponseBody, FieldAllBody, FieldWSMessage, FieldMethod, FieldHost, FieldPath, FieldStatusCode, FieldTag, FieldId:
-		getter, err := CreateStrFieldGetter(field)
+		getter, err := createstrFieldGetter(field)
 		if err != nil {
 			return nil, fmt.Errorf("error performing search: %s", err.Error())
 		}
@@ -108,11 +112,11 @@ func NewRequestChecker(args ...interface{}) (RequestChecker, error) {
 			return nil, errors.New("comparer must be a StrComparer")
 		}
 
-		return GenStrFieldChecker(getter, comparer, args[2])
+		return genStrFieldChecker(getter, comparer, args[2])
 
 	// Normal key/value fields
 	case FieldRequestHeaders, FieldResponseHeaders, FieldBothHeaders, FieldBothParam, FieldURLParam, FieldPostParam, FieldResponseCookie, FieldRequestCookie, FieldBothCookie:
-		getter, err := CreateKvPairGetter(field)
+		getter, err := createKvPairGetter(field)
 		if err != nil {
 			return nil, fmt.Errorf("error performing search: %s", err.Error())
 		}
@@ -124,7 +128,7 @@ func NewRequestChecker(args ...interface{}) (RequestChecker, error) {
 				return nil, errors.New("comparer must be a StrComparer")
 			}
 
-			// Create a StrFieldGetter out of our key/value getter
+			// Create a strFieldGetter out of our key/value getter
 			strgetter := func(req *ProxyRequest) ([]string, error) {
 				pairs, err := getter(req)
 				if err != nil {
@@ -134,7 +138,7 @@ func NewRequestChecker(args ...interface{}) (RequestChecker, error) {
 			}
 
 			// return a str field checker using our new str getter
-			return GenStrFieldChecker(strgetter, comparer, args[2])
+			return genStrFieldChecker(strgetter, comparer, args[2])
 		} else if len(args) == 5 {
 			// Get comparer and value out of function arguments
 			comparer1, ok := args[1].(StrComparer)
@@ -158,7 +162,7 @@ func NewRequestChecker(args ...interface{}) (RequestChecker, error) {
 			}
 
 			// Create a checker out of our getter, comparers, and vals
-			return GenKvFieldChecker(getter, comparer1, val1, comparer2, val2)
+			return genKvFieldChecker(getter, comparer1, val1, comparer2, val2)
 		} else {
 			return nil, errors.New("invalid number of arguments for a key/value search")
 		}
@@ -225,9 +229,7 @@ func NewRequestChecker(args ...interface{}) (RequestChecker, error) {
 	}
 }
 
-func CreateStrFieldGetter(field SearchField) (StrFieldGetter, error) {
-	// Returns a function to pull the relevant strings out of the request
-
+func createstrFieldGetter(field SearchField) (strFieldGetter, error) {
 	switch field {
 	case FieldAll:
 		return func(req *ProxyRequest) ([]string, error) {
@@ -310,6 +312,10 @@ func CreateStrFieldGetter(field SearchField) (StrFieldGetter, error) {
 			}
 			return strs, nil
 		}, nil
+	case FieldTag:
+		return func(req *ProxyRequest) ([]string, error) {
+			return req.Tags(), nil
+		}, nil
 	case FieldId:
 		return func(req *ProxyRequest) ([]string, error) {
 			strs := make([]string, 1)
@@ -321,8 +327,7 @@ func CreateStrFieldGetter(field SearchField) (StrFieldGetter, error) {
 	}
 }
 
-func GenStrChecker(cmp StrComparer, argval interface{}) (func(str string) bool, error) {
-	// Create a function to check if a string matches a value using the given comparer
+func genStrChecker(cmp StrComparer, argval interface{}) (func(str string) bool, error) {
 	switch cmp {
 	case StrContains:
 		val, ok := argval.(string)
@@ -396,10 +401,9 @@ func GenStrChecker(cmp StrComparer, argval interface{}) (func(str string) bool, 
 	}
 }
 
-func GenStrFieldChecker(strGetter StrFieldGetter, cmp StrComparer, val interface{}) (RequestChecker, error) {
-	// Generates a request checker from a string getter, a comparer, and a value
+func genStrFieldChecker(strGetter strFieldGetter, cmp StrComparer, val interface{}) (RequestChecker, error) {
 	getter := strGetter
-	comparer, err := GenStrChecker(cmp, val)
+	comparer, err := genStrChecker(cmp, val)
 	if err != nil {
 		return nil, err
 	}
@@ -462,8 +466,7 @@ func pairsToStrings(pairs []*PairValue) []string {
 	return strs
 }
 
-func CreateKvPairGetter(field SearchField) (KvFieldGetter, error) {
-	// Returns a function to pull the relevant pairs out of the request
+func createKvPairGetter(field SearchField) (kvFieldGetter, error) {
 	switch field {
 	case FieldRequestHeaders:
 		return func(req *ProxyRequest) ([]*PairValue, error) {
@@ -535,15 +538,15 @@ func CreateKvPairGetter(field SearchField) (KvFieldGetter, error) {
 	}
 }
 
-func GenKvFieldChecker(kvGetter KvFieldGetter, cmp1 StrComparer, val1 string,
+func genKvFieldChecker(kvGetter kvFieldGetter, cmp1 StrComparer, val1 string,
 	cmp2 StrComparer, val2 string) (RequestChecker, error) {
 	getter := kvGetter
-	cmpfunc1, err := GenStrChecker(cmp1, val1)
+	cmpfunc1, err := genStrChecker(cmp1, val1)
 	if err != nil {
 		return nil, err
 	}
 
-	cmpfunc2, err := GenStrChecker(cmp2, val2)
+	cmpfunc2, err := genStrChecker(cmp2, val2)
 	if err != nil {
 		return nil, err
 	}
@@ -563,7 +566,7 @@ func GenKvFieldChecker(kvGetter KvFieldGetter, cmp1 StrComparer, val1 string,
 	}, nil
 }
 
-func CheckerFromPhrase(phrase QueryPhrase) (RequestChecker, error) {
+func checkerFromPhrase(phrase QueryPhrase) (RequestChecker, error) {
 	checkers := make([]RequestChecker, len(phrase))
 	for i, args := range phrase {
 		newChecker, err := NewRequestChecker(args...)
@@ -585,10 +588,11 @@ func CheckerFromPhrase(phrase QueryPhrase) (RequestChecker, error) {
 	return ret, nil
 }
 
+// Creates a RequestChecker from a MessageQuery
 func CheckerFromMessageQuery(query MessageQuery) (RequestChecker, error) {
 	checkers := make([]RequestChecker, len(query))
 	for i, phrase := range query {
-		newChecker, err := CheckerFromPhrase(phrase)
+		newChecker, err := checkerFromPhrase(phrase)
 		if err != nil {
 			return nil, fmt.Errorf("error with phrase %d: %s", i, err.Error())
 		}
@@ -611,7 +615,7 @@ func CheckerFromMessageQuery(query MessageQuery) (RequestChecker, error) {
 StringSearch conversions
 */
 
-func FieldGoToString(field SearchField) (string, error) {
+func fieldGoToString(field SearchField) (string, error) {
 	switch field {
 	case FieldAll:
 		return "all", nil
@@ -668,7 +672,7 @@ func FieldGoToString(field SearchField) (string, error) {
 	}
 }
 
-func FieldStrToGo(field string) (SearchField, error) {
+func fieldStrToGo(field string) (SearchField, error) {
 	switch strings.ToLower(field) {
 	case "all":
 		return FieldAll, nil
@@ -725,7 +729,8 @@ func FieldStrToGo(field string) (SearchField, error) {
 	}
 }
 
-func CmpValGoToStr(comparer StrComparer, val interface{}) (string, string, error) {
+// Converts a StrComparer and a value into a comparer and value that can be used in string queries
+func cmpValGoToStr(comparer StrComparer, val interface{}) (string, string, error) {
 	var cmpStr string
 	switch comparer {
 	case StrIs:
@@ -775,7 +780,7 @@ func CmpValGoToStr(comparer StrComparer, val interface{}) (string, string, error
 	}
 }
 
-func CmpValStrToGo(strArgs []string) (StrComparer, interface{}, error) {
+func cmpValStrToGo(strArgs []string) (StrComparer, interface{}, error) {
 	if len(strArgs) != 2 {
 		return 0, "", fmt.Errorf("parsing a comparer/val requires one comparer and one value. Got %d arguments.", len(strArgs))
 	}
@@ -817,7 +822,7 @@ func CheckArgsStrToGo(strArgs []string) ([]interface{}, error) {
 	}
 
 	// Parse the field
-	field, err := FieldStrToGo(strArgs[0])
+	field, err := fieldStrToGo(strArgs[0])
 	if err != nil {
 		return nil, err
 	}
@@ -832,7 +837,7 @@ func CheckArgsStrToGo(strArgs []string) ([]interface{}, error) {
 			return nil, errors.New("string field searches require one comparer and one value")
 		}
 
-		cmp, val, err := CmpValStrToGo(remaining)
+		cmp, val, err := cmpValStrToGo(remaining)
 		if err != nil {
 			return nil, err
 		}
@@ -841,21 +846,21 @@ func CheckArgsStrToGo(strArgs []string) ([]interface{}, error) {
 	// Normal key/value fields
 	case FieldRequestHeaders, FieldResponseHeaders, FieldBothHeaders, FieldBothParam, FieldURLParam, FieldPostParam, FieldResponseCookie, FieldRequestCookie, FieldBothCookie:
 		if len(remaining) == 2 {
-			cmp, val, err := CmpValStrToGo(remaining)
+			cmp, val, err := cmpValStrToGo(remaining)
 			if err != nil {
 				return nil, err
 			}
 			args = append(args, cmp)
 			args = append(args, val)
 		} else if len(remaining) == 4 {
-			cmp, val, err := CmpValStrToGo(remaining[0:2])
+			cmp, val, err := cmpValStrToGo(remaining[0:2])
 			if err != nil {
 				return nil, err
 			}
 			args = append(args, cmp)
 			args = append(args, val)
 
-			cmp, val, err = CmpValStrToGo(remaining[2:4])
+			cmp, val, err = cmpValStrToGo(remaining[2:4])
 			if err != nil {
 				return nil, err
 			}
@@ -918,7 +923,7 @@ func CheckArgsGoToStr(args []interface{}) ([]string, error) {
 		return nil, errors.New("first argument is not a field")
 	}
 
-	strField, err := FieldGoToString(field)
+	strField, err := fieldGoToString(field)
 	if err != nil {
 		return nil, err
 	}
@@ -935,7 +940,7 @@ func CheckArgsGoToStr(args []interface{}) ([]string, error) {
 			return nil, errors.New("comparer must be a StrComparer")
 		}
 
-		cmpStr, valStr, err := CmpValGoToStr(comparer, args[2])
+		cmpStr, valStr, err := cmpValGoToStr(comparer, args[2])
 		if err != nil {
 			return nil, err
 		}
@@ -950,7 +955,7 @@ func CheckArgsGoToStr(args []interface{}) ([]string, error) {
 				return nil, errors.New("comparer must be a StrComparer")
 			}
 
-			cmpStr, valStr, err := CmpValGoToStr(comparer, args[2])
+			cmpStr, valStr, err := cmpValGoToStr(comparer, args[2])
 			if err != nil {
 				return nil, err
 			}
@@ -964,7 +969,7 @@ func CheckArgsGoToStr(args []interface{}) ([]string, error) {
 				return nil, errors.New("comparer1 must be a StrComparer")
 			}
 
-			cmpStr1, valStr1, err := CmpValGoToStr(comparer1, args[2])
+			cmpStr1, valStr1, err := cmpValGoToStr(comparer1, args[2])
 			if err != nil {
 				return nil, err
 			}
@@ -976,7 +981,7 @@ func CheckArgsGoToStr(args []interface{}) ([]string, error) {
 				return nil, errors.New("comparer2 must be a StrComparer")
 			}
 
-			cmpStr2, valStr2, err := CmpValGoToStr(comparer2, args[2])
+			cmpStr2, valStr2, err := cmpValGoToStr(comparer2, args[2])
 			if err != nil {
 				return nil, err
 			}
@@ -1034,7 +1039,7 @@ func CheckArgsGoToStr(args []interface{}) ([]string, error) {
 	}
 }
 
-func StrPhraseToGoPhrase(phrase StrQueryPhrase) (QueryPhrase, error) {
+func strPhraseToGoPhrase(phrase StrQueryPhrase) (QueryPhrase, error) {
 	goPhrase := make(QueryPhrase, len(phrase))
 	for i, strArgs := range phrase {
 		var err error
@@ -1046,7 +1051,7 @@ func StrPhraseToGoPhrase(phrase StrQueryPhrase) (QueryPhrase, error) {
 	return goPhrase, nil
 }
 
-func GoPhraseToStrPhrase(phrase QueryPhrase) (StrQueryPhrase, error) {
+func goPhraseToStrPhrase(phrase QueryPhrase) (StrQueryPhrase, error) {
 	strPhrase := make(StrQueryPhrase, len(phrase))
 	for i, goArgs := range phrase {
 		var err error
@@ -1058,11 +1063,12 @@ func GoPhraseToStrPhrase(phrase QueryPhrase) (StrQueryPhrase, error) {
 	return strPhrase, nil
 }
 
-func StrQueryToGoQuery(query StrMessageQuery) (MessageQuery, error) {
+// Converts a StrMessageQuery into a MessageQuery
+func StrQueryToMsgQuery(query StrMessageQuery) (MessageQuery, error) {
 	goQuery := make(MessageQuery, len(query))
 	for i, phrase := range query {
 		var err error
-		goQuery[i], err = StrPhraseToGoPhrase(phrase)
+		goQuery[i], err = strPhraseToGoPhrase(phrase)
 		if err != nil {
 			return nil, fmt.Errorf("Error with phrase %d: %s", i, err.Error())
 		}
@@ -1070,11 +1076,12 @@ func StrQueryToGoQuery(query StrMessageQuery) (MessageQuery, error) {
 	return goQuery, nil
 }
 
-func GoQueryToStrQuery(query MessageQuery) (StrMessageQuery, error) {
+// Converts a MessageQuery into a StrMessageQuery
+func MsgQueryToStrQuery(query MessageQuery) (StrMessageQuery, error) {
 	strQuery := make(StrMessageQuery, len(query))
 	for i, phrase := range query {
 		var err error
-		strQuery[i], err = GoPhraseToStrPhrase(phrase)
+		strQuery[i], err = goPhraseToStrPhrase(phrase)
 		if err != nil {
 			return nil, fmt.Errorf("Error with phrase %d: %s", i, err.Error())
 		}

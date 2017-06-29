@@ -1,4 +1,4 @@
-package main
+package puppy
 
 /*
 List of info that is used to display credits
@@ -13,7 +13,7 @@ type creditItem struct {
 	longCopyright string
 }
 
-var LIB_CREDITS = []creditItem{
+var lib_credits = []creditItem{
 	creditItem{
 		"goproxy",
 		"https://github.com/elazarl/goproxy",
