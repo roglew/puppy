@@ -25,6 +25,7 @@ type SQLiteStorage struct {
 	dbConn *sql.DB
 	mtx    sync.Mutex
 	logger *log.Logger
+	storageWatchers []StorageWatcher
 }
 
 /*
@@ -47,6 +48,7 @@ func OpenSQLiteStorage(fname string, logger *log.Logger) (*SQLiteStorage, error)
 	}
 
 	rs.logger = logger
+	rs.storageWatchers = make([]StorageWatcher, 0)
 	return rs, nil
 }
 
@@ -373,6 +375,9 @@ func (ms *SQLiteStorage) SaveNewRequest(req *ProxyRequest) error {
 		return err
 	}
 	tx.Commit()
+	for _, watcher := range ms.storageWatchers {
+		watcher.NewRequestSaved(ms, req)
+	}
 	return nil
 }
 
@@ -449,6 +454,9 @@ func (ms *SQLiteStorage) UpdateRequest(req *ProxyRequest) error {
 		return err
 	}
 	tx.Commit()
+	for _, watcher := range ms.storageWatchers {
+		watcher.RequestUpdated(ms, req)
+	}
 	return nil
 }
 
@@ -638,6 +646,9 @@ func (ms *SQLiteStorage) DeleteRequest(reqid string) error {
 		return err
 	}
 	tx.Commit()
+	for _, watcher := range ms.storageWatchers {
+		watcher.RequestDeleted(ms, reqid)
+	}
 	return nil
 }
 
@@ -723,6 +734,9 @@ func (ms *SQLiteStorage) SaveNewResponse(rsp *ProxyResponse) error {
 		return err
 	}
 	tx.Commit()
+	for _, watcher := range ms.storageWatchers {
+		watcher.NewResponseSaved(ms, rsp)
+	}
 	return nil
 }
 
@@ -776,6 +790,9 @@ func (ms *SQLiteStorage) UpdateResponse(rsp *ProxyResponse) error {
 		return err
 	}
 	tx.Commit()
+	for _, watcher := range ms.storageWatchers {
+		watcher.ResponseUpdated(ms, rsp)
+	}
 	return nil
 }
 
@@ -912,6 +929,9 @@ func (ms *SQLiteStorage) DeleteResponse(rspid string) error {
 		return err
 	}
 	tx.Commit()
+	for _, watcher := range ms.storageWatchers {
+		watcher.ResponseDeleted(ms, rspid)
+	}
 	return nil
 }
 
@@ -970,6 +990,9 @@ func (ms *SQLiteStorage) SaveNewWSMessage(req *ProxyRequest, wsm *ProxyWSMessage
 		return err
 	}
 	tx.Commit()
+	for _, watcher := range ms.storageWatchers {
+		watcher.NewWSMessageSaved(ms, req, wsm)
+	}
 	return nil
 }
 
@@ -1047,6 +1070,9 @@ func (ms *SQLiteStorage) UpdateWSMessage(req *ProxyRequest, wsm *ProxyWSMessage)
 		return err
 	}
 	tx.Commit()
+	for _, watcher := range ms.storageWatchers {
+		watcher.WSMessageUpdated(ms, req, wsm)
+	}
 	return nil
 }
 
@@ -1225,6 +1251,9 @@ func (ms *SQLiteStorage) DeleteWSMessage(wsmid string) error {
 		return err
 	}
 	tx.Commit()
+	for _, watcher := range ms.storageWatchers {
+		watcher.WSMessageDeleted(ms, wsmid)
+	}
 	return nil
 }
 
@@ -1601,4 +1630,24 @@ func (ms *SQLiteStorage) allSavedQueries(tx *sql.Tx) ([]*SavedQuery, error) {
 		return nil, fmt.Errorf("could not get context names from datafile: %s", err.Error())
 	}
 	return savedQueries, nil
+}
+
+func (ms *SQLiteStorage) Watch(watcher StorageWatcher) error {
+	ms.mtx.Lock()
+	defer ms.mtx.Unlock()
+	ms.storageWatchers = append(ms.storageWatchers, watcher)
+	return nil
+}
+
+func (ms *SQLiteStorage) EndWatch(watcher StorageWatcher) error {
+	ms.mtx.Lock()
+	var newWatched = make([]StorageWatcher, 0)
+	for _, testWatcher := range ms.storageWatchers {
+		if (testWatcher != watcher) {
+			newWatched = append(newWatched, testWatcher)
+		}
+	}
+	ms.storageWatchers = newWatched
+	ms.mtx.Unlock()
+	return nil
 }

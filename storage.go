@@ -61,6 +61,34 @@ type MessageStorage interface {
 	LoadQuery(name string) (MessageQuery, error)
     // Delete a query by name from the storage
 	DeleteQuery(name string) error
+
+	// Add a storage watcher to make callbacks to on message saves
+	Watch(watcher StorageWatcher) error
+	// Remove a storage watcher from the storage
+	EndWatch(watcher StorageWatcher) error
+}
+
+type StorageWatcher interface {
+	// Callback for when a new request is saved
+	NewRequestSaved(ms MessageStorage, req *ProxyRequest)
+	// Callback for when a request is updated
+	RequestUpdated(ms MessageStorage, req *ProxyRequest)
+	// Callback for when a request is deleted
+	RequestDeleted(ms MessageStorage, DbId string)
+
+	// Callback for when a new response is saved
+	NewResponseSaved(ms MessageStorage, rsp *ProxyResponse)
+	// Callback for when a response is updated
+	ResponseUpdated(ms MessageStorage, rsp *ProxyResponse)
+	// Callback for when a response is deleted
+	ResponseDeleted(ms MessageStorage, DbId string)
+
+	// Callback for when a new wsmessage is saved
+	NewWSMessageSaved(ms MessageStorage, req *ProxyRequest, wsm *ProxyWSMessage)
+	// Callback for when a wsmessage is updated
+	WSMessageUpdated(ms MessageStorage, req *ProxyRequest, wsm *ProxyWSMessage)
+	// Callback for when a wsmessage is deleted
+	WSMessageDeleted(ms MessageStorage, DbId string)
 }
 
 // An error to be returned if a query is not supported

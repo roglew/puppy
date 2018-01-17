@@ -54,6 +54,7 @@ func NewProxyMessageListener(logger *log.Logger, iproxy *InterceptingProxy) *Mes
 	l.AddHandler("setproxystorage", setProxyStorageHandler)
 	l.AddHandler("liststorage", listProxyStorageHandler)
 	l.AddHandler("setproxy", setProxyHandler)
+	l.AddHandler("watchstorage", watchStorageHandler)
 
 	return l
 }
@@ -678,8 +679,10 @@ CheckRequest
 */
 
 type checkRequestMessage struct {
-	Query   StrMessageQuery
-	Request *RequestJSON
+	Query       StrMessageQuery
+	Request     *RequestJSON
+	DbId        string
+	StorageId   int
 }
 
 type checkRequestResponse struct {
@@ -694,10 +697,31 @@ func checkRequestHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Inter
 		return
 	}
 
-	req, err := mreq.Request.Parse()
-	if err != nil {
-		ErrorResponse(c, fmt.Sprintf("error parsing http request: %s", err.Error()))
-		return
+	var req *ProxyRequest
+	var err error
+
+	if mreq.DbId != "" {
+		storage, _ := iproxy.GetMessageStorage(mreq.StorageId)
+		if storage == nil {
+			ErrorResponse(c, fmt.Sprintf("storage with id %d does not exist", mreq.StorageId))
+			return
+		}
+		searchResults, err := storage.Search(1, FieldId, StrIs, mreq.DbId)
+		if err != nil {
+			ErrorResponse(c, err.Error())
+			return
+		}
+	    if len(searchResults) == 0 {
+			ErrorResponse(c, fmt.Sprintf("message with id=%s does not exist", mreq.DbId))
+			return
+		}
+		req = searchResults[0]
+	} else {
+		req, err = mreq.Request.Parse()
+		if err != nil {
+			ErrorResponse(c, fmt.Sprintf("error parsing http request: %s", err.Error()))
+			return
+		}
 	}
 
 	goQuery, err := StrQueryToMsgQuery(mreq.Query)
@@ -1920,3 +1944,153 @@ func setProxyHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Intercept
 
 	MessageResponse(c, &successResult{Success: true})
 }
+
+/*
+WatchStorage
+*/
+type watchStorageMessage struct {
+	StorageId   int
+	HeadersOnly bool
+}
+
+type proxyMsgStorageWatcher struct {
+	connMtx sync.Mutex
+	storageId int
+	headersOnly bool
+	conn net.Conn
+}
+
+type storageUpdateResponse struct {
+	StorageId int
+	Action string
+	MessageId string
+	Request *RequestJSON
+	Response *ResponseJSON
+	WSMessage *WSMessageJSON
+}
+
+// Implement watcher
+
+func (sw *proxyMsgStorageWatcher) NewRequestSaved(ms MessageStorage, req *ProxyRequest) {
+	var msgRsp storageUpdateResponse
+	msgRsp.Request = NewRequestJSON(req, sw.headersOnly)
+	msgRsp.Action = "NewRequest"
+	msgRsp.StorageId = sw.storageId
+	MessageResponse(sw.conn, msgRsp)
+}
+
+func (sw *proxyMsgStorageWatcher) RequestUpdated(ms MessageStorage, req *ProxyRequest) {
+	var msgRsp storageUpdateResponse
+	msgRsp.Request = NewRequestJSON(req, sw.headersOnly)
+	msgRsp.Action = "RequestUpdated"
+	msgRsp.StorageId = sw.storageId
+	MessageResponse(sw.conn, msgRsp)
+}
+
+func (sw *proxyMsgStorageWatcher) RequestDeleted(ms MessageStorage, DbId string) {
+	var msgRsp storageUpdateResponse
+	msgRsp.Action = "RequestDeleted"
+	msgRsp.MessageId = DbId
+	msgRsp.StorageId = sw.storageId
+	MessageResponse(sw.conn, msgRsp)
+}
+
+func (sw *proxyMsgStorageWatcher) NewResponseSaved(ms MessageStorage, rsp *ProxyResponse) {
+	var msgRsp storageUpdateResponse
+	msgRsp.Response = NewResponseJSON(rsp, sw.headersOnly)
+	msgRsp.Action = "NewResponse"
+	msgRsp.StorageId = sw.storageId
+	MessageResponse(sw.conn, msgRsp)
+}
+
+func (sw *proxyMsgStorageWatcher) ResponseUpdated(ms MessageStorage, rsp *ProxyResponse) {
+	var msgRsp storageUpdateResponse
+	msgRsp.Response = NewResponseJSON(rsp, sw.headersOnly)
+	msgRsp.Action = "ResponseUpdated"
+	msgRsp.StorageId = sw.storageId
+	MessageResponse(sw.conn, msgRsp)
+}
+
+func (sw *proxyMsgStorageWatcher) ResponseDeleted(ms MessageStorage, DbId string) {
+	var msgRsp storageUpdateResponse
+	msgRsp.Action = "ResponseDeleted"
+	msgRsp.MessageId = DbId
+	msgRsp.StorageId = sw.storageId
+	MessageResponse(sw.conn, msgRsp)
+}
+
+func (sw *proxyMsgStorageWatcher) NewWSMessageSaved(ms MessageStorage, req *ProxyRequest, wsm *ProxyWSMessage) {
+	var msgRsp storageUpdateResponse
+	msgRsp.Request = NewRequestJSON(req, sw.headersOnly)
+	msgRsp.WSMessage = NewWSMessageJSON(wsm)
+	msgRsp.Action = "NewWSMessage"
+	msgRsp.StorageId = sw.storageId
+	MessageResponse(sw.conn, msgRsp)
+}
+
+func (sw *proxyMsgStorageWatcher) WSMessageUpdated(ms MessageStorage, req *ProxyRequest, wsm *ProxyWSMessage) {
+	var msgRsp storageUpdateResponse
+	msgRsp.Request = NewRequestJSON(req, sw.headersOnly)
+	msgRsp.WSMessage = NewWSMessageJSON(wsm)
+	msgRsp.Action = "WSMessageUpdated"
+	msgRsp.StorageId = sw.storageId
+	MessageResponse(sw.conn, msgRsp)
+}
+
+func (sw *proxyMsgStorageWatcher) WSMessageDeleted(ms MessageStorage, DbId string) {
+	var msgRsp storageUpdateResponse
+	msgRsp.Action = "WSMessageDeleted"
+	msgRsp.MessageId = DbId
+	msgRsp.StorageId = sw.storageId
+	MessageResponse(sw.conn, msgRsp)
+}
+
+// Actual handler
+
+func watchStorageHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *InterceptingProxy) {
+	mreq := watchStorageMessage{}
+	if err := json.Unmarshal(b, &mreq); err != nil {
+		ErrorResponse(c, "error parsing message")
+		return
+	}
+
+	// Parse storageId
+	storages := make([]*SavedStorage, 0)
+	if mreq.StorageId == -1 {
+		storages = iproxy.ListMessageStorage()
+	} else {
+		ms, desc := iproxy.GetMessageStorage(mreq.StorageId)
+		if ms == nil {
+			ErrorResponse(c, "invalid storage id")
+			return
+		}
+
+		storage := &SavedStorage{
+			Id: mreq.StorageId,
+			Storage: ms,
+			Description: desc,
+		}
+		storages = append(storages, storage)
+	}
+
+	// Create the watchers
+	for _, storage := range storages {
+		watcher := &proxyMsgStorageWatcher{
+			storageId: storage.Id,
+			headersOnly: mreq.HeadersOnly,
+			conn: c,
+		}
+		// Apply the watcher, kill them at end of connection
+		storage.Storage.Watch(watcher)
+		defer storage.Storage.EndWatch(watcher)
+	}
+
+	// Keep the connection open
+	MessageResponse(c, &successResult{Success: true})
+	tmpbuf := make([]byte, 0)
+	var err error = nil
+	for err == nil {
+		_, err = c.Read(tmpbuf)
+	}
+}
+
