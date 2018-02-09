@@ -2087,7 +2087,7 @@ func watchStorageHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Inter
 
 	// Keep the connection open
 	MessageResponse(c, &successResult{Success: true})
-	tmpbuf := make([]byte, 0)
+	tmpbuf := make([]byte, 1)
 	var err error = nil
 	for err == nil {
 		_, err = c.Read(tmpbuf)
