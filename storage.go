@@ -66,6 +66,10 @@ type MessageStorage interface {
 	Watch(watcher StorageWatcher) error
 	// Remove a storage watcher from the storage
 	EndWatch(watcher StorageWatcher) error
+
+	// Set/get plugin values
+	SetPluginValue(key string, value string) error
+	GetPluginValue(key string) (string, error)
 }
 
 type StorageWatcher interface {

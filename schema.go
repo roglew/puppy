@@ -19,6 +19,7 @@ type tableNameRow struct {
 var schemaUpdaters = []schemaUpdater{
 	schema8,
 	schema9,
+	schema10,
 }
 
 func UpdateSchema(db *sql.DB, logger *log.Logger) error {
@@ -541,5 +542,29 @@ func schema9(tx *sql.Tx) error {
 	if err := execute(tx, `UPDATE schema_meta SET version=9`); err != nil {
 		return err
 	}
+	return nil
+}
+
+func schema10(tx *sql.Tx) error {
+	/*
+	   Create a "plugin data" table to let applications store app-specific data in the datafile
+	*/
+	cmds := []string{`
+    CREATE TABLE plugin_data (
+            id     INTEGER   PRIMARY KEY  AUTOINCREMENT,
+            key    TEXT      UNIQUE,
+            value  STRING
+        );
+    CREATE INDEX plugin_key_ind ON plugin_data(key);
+    `,
+
+	`UPDATE schema_meta SET version=10`,
+	}
+
+	err := executeMultiple(tx, cmds)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }

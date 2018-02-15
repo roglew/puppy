@@ -26,6 +26,39 @@ type savedStorage struct {
 	description string
 }
 
+type GlobalStorageWatcher interface {
+	// Callback for when a new request is saved
+	NewRequestSaved(storageId int, ms MessageStorage, req *ProxyRequest)
+	// Callback for when a request is updated
+	RequestUpdated(storageId int, ms MessageStorage, req *ProxyRequest)
+	// Callback for when a request is deleted
+	RequestDeleted(storageId int, ms MessageStorage, DbId string)
+
+	// Callback for when a new response is saved
+	NewResponseSaved(storageId int, ms MessageStorage, rsp *ProxyResponse)
+	// Callback for when a response is updated
+	ResponseUpdated(storageId int, ms MessageStorage, rsp *ProxyResponse)
+	// Callback for when a response is deleted
+	ResponseDeleted(storageId int, ms MessageStorage, DbId string)
+
+	// Callback for when a new wsmessage is saved
+	NewWSMessageSaved(storageId int, ms MessageStorage, req *ProxyRequest, wsm *ProxyWSMessage)
+	// Callback for when a wsmessage is updated
+	WSMessageUpdated(storageId int, ms MessageStorage, req *ProxyRequest, wsm *ProxyWSMessage)
+	// Callback for when a wsmessage is deleted
+	WSMessageDeleted(storageId int, ms MessageStorage, DbId string)
+}
+
+type globalWatcher struct {
+	watchers []GlobalStorageWatcher
+}
+
+type globalWatcherShim struct {
+	storageId   int
+	globWatcher *globalWatcher
+	logger *log.Logger
+}
+
 // InterceptingProxy is a struct which represents a proxy which can intercept and modify HTTP and websocket messages
 type InterceptingProxy struct {
 	slistener    *ProxyListener
@@ -54,6 +87,7 @@ type InterceptingProxy struct {
 	httpHandlers map[string]ProxyWebUIHandler
 
 	messageStorage map[int]*savedStorage
+	globWatcher *globalWatcher
 }
 
 // ProxyCredentials are a username/password combination used to represent an HTTP BasicAuth session
@@ -111,6 +145,9 @@ func NewInterceptingProxy(logger *log.Logger) *InterceptingProxy {
 	iproxy.server = newProxyServer(useLogger, &iproxy)
 	iproxy.logger = useLogger
 	iproxy.httpHandlers = make(map[string]ProxyWebUIHandler)
+	iproxy.globWatcher = &globalWatcher{
+		watchers: make([]GlobalStorageWatcher, 0),
+	}
 
 	go func() {
 		iproxy.server.Serve(iproxy.slistener)
@@ -189,6 +226,13 @@ func (iproxy *InterceptingProxy) AddMessageStorage(storage MessageStorage, descr
 	defer iproxy.mtx.Unlock()
 	id := getNextStorageId()
 	iproxy.messageStorage[id] = &savedStorage{storage, description}
+
+	shim := &globalWatcherShim{
+		storageId: id,
+		globWatcher: iproxy.globWatcher,
+		logger: iproxy.logger,
+	}
+	storage.Watch(shim)
 	return id
 }
 
@@ -490,6 +534,28 @@ func (iproxy *InterceptingProxy) RemoveWSInterceptor(sub *WSIntSub) {
 			return
 		}
 	}
+}
+
+// Add a global storage watcher
+func (iproxy *InterceptingProxy) GlobalStorageWatch(watcher GlobalStorageWatcher) error {
+	iproxy.mtx.Lock()
+	defer iproxy.mtx.Unlock()
+	iproxy.globWatcher.watchers = append(iproxy.globWatcher.watchers, watcher)
+	return nil
+}
+
+// Remove a global storage watcher
+func (iproxy *InterceptingProxy) GlobalStorageEndWatch(watcher GlobalStorageWatcher) error {
+	iproxy.mtx.Lock()
+	defer iproxy.mtx.Unlock()
+	var newWatched = make([]GlobalStorageWatcher, 0)
+	for _, testWatcher := range iproxy.globWatcher.watchers {
+		if (testWatcher != watcher) {
+			newWatched = append(newWatched, testWatcher)
+		}
+	}
+	iproxy.globWatcher.watchers = newWatched
+	return nil
 }
 
 // SetProxyStorage sets which storage should be used to store messages as they pass through the proxy
@@ -916,3 +982,59 @@ func newProxyServer(logger *log.Logger, iproxy *InterceptingProxy) *http.Server 
 	}
 	return server
 }
+
+// StorageWatcher implementation
+func (watcher *globalWatcherShim) NewRequestSaved(ms MessageStorage, req *ProxyRequest) {
+	for _, w := range watcher.globWatcher.watchers {
+		w.NewRequestSaved(watcher.storageId, ms, req)
+	}
+}
+
+func (watcher *globalWatcherShim) RequestUpdated(ms MessageStorage, req *ProxyRequest) {
+	for _, w := range watcher.globWatcher.watchers {
+		w.RequestUpdated(watcher.storageId, ms, req)
+	}
+}
+
+func (watcher *globalWatcherShim) RequestDeleted(ms MessageStorage, DbId string) {
+	for _, w := range watcher.globWatcher.watchers {
+		w.RequestDeleted(watcher.storageId, ms, DbId)
+	}
+}
+
+func (watcher *globalWatcherShim) NewResponseSaved(ms MessageStorage, rsp *ProxyResponse) {
+	for _, w := range watcher.globWatcher.watchers {
+		w.NewResponseSaved(watcher.storageId, ms, rsp)
+	}
+}
+
+func (watcher *globalWatcherShim) ResponseUpdated(ms MessageStorage, rsp *ProxyResponse) {
+	for _, w := range watcher.globWatcher.watchers {
+		w.ResponseUpdated(watcher.storageId, ms, rsp)
+	}
+}
+
+func (watcher *globalWatcherShim) ResponseDeleted(ms MessageStorage, DbId string) {
+	for _, w := range watcher.globWatcher.watchers {
+		w.ResponseDeleted(watcher.storageId, ms, DbId)
+	}
+}
+
+func (watcher *globalWatcherShim) NewWSMessageSaved(ms MessageStorage, req *ProxyRequest, wsm *ProxyWSMessage) {
+	for _, w := range watcher.globWatcher.watchers {
+		w.NewWSMessageSaved(watcher.storageId, ms, req, wsm)
+	}
+}
+
+func (watcher *globalWatcherShim) WSMessageUpdated(ms MessageStorage, req *ProxyRequest, wsm *ProxyWSMessage) {
+	for _, w := range watcher.globWatcher.watchers {
+		w.WSMessageUpdated(watcher.storageId, ms, req, wsm)
+	}
+}
+
+func (watcher *globalWatcherShim) WSMessageDeleted(ms MessageStorage, DbId string) {
+	for _, w := range watcher.globWatcher.watchers {
+		w.WSMessageDeleted(watcher.storageId, ms, DbId)
+	}
+}
+

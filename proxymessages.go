@@ -55,6 +55,8 @@ func NewProxyMessageListener(logger *log.Logger, iproxy *InterceptingProxy) *Mes
 	l.AddHandler("liststorage", listProxyStorageHandler)
 	l.AddHandler("setproxy", setProxyHandler)
 	l.AddHandler("watchstorage", watchStorageHandler)
+	l.AddHandler("setpluginvalue", setPluginValueHandler)
+	l.AddHandler("getpluginvalue", getPluginValueHandler)
 
 	return l
 }
@@ -1949,13 +1951,11 @@ func setProxyHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Intercept
 WatchStorage
 */
 type watchStorageMessage struct {
-	StorageId   int
 	HeadersOnly bool
 }
 
 type proxyMsgStorageWatcher struct {
 	connMtx sync.Mutex
-	storageId int
 	headersOnly bool
 	conn net.Conn
 }
@@ -1971,77 +1971,95 @@ type storageUpdateResponse struct {
 
 // Implement watcher
 
-func (sw *proxyMsgStorageWatcher) NewRequestSaved(ms MessageStorage, req *ProxyRequest) {
-	var msgRsp storageUpdateResponse
+func (sw *proxyMsgStorageWatcher) NewRequestSaved(storageId int, ms MessageStorage, req *ProxyRequest) {
+	sw.connMtx.Lock()
+	defer sw.connMtx.Unlock()
+	msgRsp := &storageUpdateResponse{}
 	msgRsp.Request = NewRequestJSON(req, sw.headersOnly)
 	msgRsp.Action = "NewRequest"
-	msgRsp.StorageId = sw.storageId
+	msgRsp.StorageId = storageId
 	MessageResponse(sw.conn, msgRsp)
 }
 
-func (sw *proxyMsgStorageWatcher) RequestUpdated(ms MessageStorage, req *ProxyRequest) {
-	var msgRsp storageUpdateResponse
+func (sw *proxyMsgStorageWatcher) RequestUpdated(storageId int, ms MessageStorage, req *ProxyRequest) {
+	sw.connMtx.Lock()
+	defer sw.connMtx.Unlock()
+	msgRsp := &storageUpdateResponse{}
 	msgRsp.Request = NewRequestJSON(req, sw.headersOnly)
 	msgRsp.Action = "RequestUpdated"
-	msgRsp.StorageId = sw.storageId
+	msgRsp.StorageId = storageId
 	MessageResponse(sw.conn, msgRsp)
 }
 
-func (sw *proxyMsgStorageWatcher) RequestDeleted(ms MessageStorage, DbId string) {
-	var msgRsp storageUpdateResponse
+func (sw *proxyMsgStorageWatcher) RequestDeleted(storageId int, ms MessageStorage, DbId string) {
+	sw.connMtx.Lock()
+	defer sw.connMtx.Unlock()
+	msgRsp := &storageUpdateResponse{}
 	msgRsp.Action = "RequestDeleted"
 	msgRsp.MessageId = DbId
-	msgRsp.StorageId = sw.storageId
+	msgRsp.StorageId = storageId
 	MessageResponse(sw.conn, msgRsp)
 }
 
-func (sw *proxyMsgStorageWatcher) NewResponseSaved(ms MessageStorage, rsp *ProxyResponse) {
-	var msgRsp storageUpdateResponse
+func (sw *proxyMsgStorageWatcher) NewResponseSaved(storageId int, ms MessageStorage, rsp *ProxyResponse) {
+	sw.connMtx.Lock()
+	defer sw.connMtx.Unlock()
+	msgRsp := &storageUpdateResponse{}
 	msgRsp.Response = NewResponseJSON(rsp, sw.headersOnly)
 	msgRsp.Action = "NewResponse"
-	msgRsp.StorageId = sw.storageId
+	msgRsp.StorageId = storageId
 	MessageResponse(sw.conn, msgRsp)
 }
 
-func (sw *proxyMsgStorageWatcher) ResponseUpdated(ms MessageStorage, rsp *ProxyResponse) {
-	var msgRsp storageUpdateResponse
+func (sw *proxyMsgStorageWatcher) ResponseUpdated(storageId int, ms MessageStorage, rsp *ProxyResponse) {
+	sw.connMtx.Lock()
+	defer sw.connMtx.Unlock()
+	msgRsp := &storageUpdateResponse{}
 	msgRsp.Response = NewResponseJSON(rsp, sw.headersOnly)
 	msgRsp.Action = "ResponseUpdated"
-	msgRsp.StorageId = sw.storageId
+	msgRsp.StorageId = storageId
 	MessageResponse(sw.conn, msgRsp)
 }
 
-func (sw *proxyMsgStorageWatcher) ResponseDeleted(ms MessageStorage, DbId string) {
-	var msgRsp storageUpdateResponse
+func (sw *proxyMsgStorageWatcher) ResponseDeleted(storageId int, ms MessageStorage, DbId string) {
+	sw.connMtx.Lock()
+	defer sw.connMtx.Unlock()
+	msgRsp := &storageUpdateResponse{}
 	msgRsp.Action = "ResponseDeleted"
 	msgRsp.MessageId = DbId
-	msgRsp.StorageId = sw.storageId
+	msgRsp.StorageId = storageId
 	MessageResponse(sw.conn, msgRsp)
 }
 
-func (sw *proxyMsgStorageWatcher) NewWSMessageSaved(ms MessageStorage, req *ProxyRequest, wsm *ProxyWSMessage) {
-	var msgRsp storageUpdateResponse
+func (sw *proxyMsgStorageWatcher) NewWSMessageSaved(storageId int, ms MessageStorage, req *ProxyRequest, wsm *ProxyWSMessage) {
+	sw.connMtx.Lock()
+	defer sw.connMtx.Unlock()
+	msgRsp := &storageUpdateResponse{}
 	msgRsp.Request = NewRequestJSON(req, sw.headersOnly)
 	msgRsp.WSMessage = NewWSMessageJSON(wsm)
 	msgRsp.Action = "NewWSMessage"
-	msgRsp.StorageId = sw.storageId
+	msgRsp.StorageId = storageId
 	MessageResponse(sw.conn, msgRsp)
 }
 
-func (sw *proxyMsgStorageWatcher) WSMessageUpdated(ms MessageStorage, req *ProxyRequest, wsm *ProxyWSMessage) {
-	var msgRsp storageUpdateResponse
+func (sw *proxyMsgStorageWatcher) WSMessageUpdated(storageId int, ms MessageStorage, req *ProxyRequest, wsm *ProxyWSMessage) {
+	sw.connMtx.Lock()
+	defer sw.connMtx.Unlock()
+	msgRsp := &storageUpdateResponse{}
 	msgRsp.Request = NewRequestJSON(req, sw.headersOnly)
 	msgRsp.WSMessage = NewWSMessageJSON(wsm)
 	msgRsp.Action = "WSMessageUpdated"
-	msgRsp.StorageId = sw.storageId
+	msgRsp.StorageId = storageId
 	MessageResponse(sw.conn, msgRsp)
 }
 
-func (sw *proxyMsgStorageWatcher) WSMessageDeleted(ms MessageStorage, DbId string) {
+func (sw *proxyMsgStorageWatcher) WSMessageDeleted(storageId int, ms MessageStorage, DbId string) {
+	sw.connMtx.Lock()
+	defer sw.connMtx.Unlock()
 	var msgRsp storageUpdateResponse
 	msgRsp.Action = "WSMessageDeleted"
 	msgRsp.MessageId = DbId
-	msgRsp.StorageId = sw.storageId
+	msgRsp.StorageId = storageId
 	MessageResponse(sw.conn, msgRsp)
 }
 
@@ -2054,36 +2072,13 @@ func watchStorageHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Inter
 		return
 	}
 
-	// Parse storageId
-	storages := make([]*SavedStorage, 0)
-	if mreq.StorageId == -1 {
-		storages = iproxy.ListMessageStorage()
-	} else {
-		ms, desc := iproxy.GetMessageStorage(mreq.StorageId)
-		if ms == nil {
-			ErrorResponse(c, "invalid storage id")
-			return
-		}
-
-		storage := &SavedStorage{
-			Id: mreq.StorageId,
-			Storage: ms,
-			Description: desc,
-		}
-		storages = append(storages, storage)
+	// add global watcher
+	watcher := &proxyMsgStorageWatcher{
+		headersOnly: mreq.HeadersOnly,
+		conn: c,
 	}
-
-	// Create the watchers
-	for _, storage := range storages {
-		watcher := &proxyMsgStorageWatcher{
-			storageId: storage.Id,
-			headersOnly: mreq.HeadersOnly,
-			conn: c,
-		}
-		// Apply the watcher, kill them at end of connection
-		storage.Storage.Watch(watcher)
-		defer storage.Storage.EndWatch(watcher)
-	}
+	iproxy.GlobalStorageWatch(watcher)
+	defer iproxy.GlobalStorageEndWatch(watcher)
 
 	// Keep the connection open
 	MessageResponse(c, &successResult{Success: true})
@@ -2092,5 +2087,90 @@ func watchStorageHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *Inter
 	for err == nil {
 		_, err = c.Read(tmpbuf)
 	}
+}
+
+/*
+SetPluginValue and GetPluginValue
+*/
+type setPluginValueMessage struct {
+	Key     string
+	Value   string
+	Storage int
+}
+
+func setPluginValueHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *InterceptingProxy) {
+	mreq := setPluginValueMessage{}
+
+	if err := json.Unmarshal(b, &mreq); err != nil {
+		ErrorResponse(c, "error parsing message")
+		return
+	}
+
+	if mreq.Storage == 0 {
+		ErrorResponse(c, "storage is required")
+		return
+	}
+
+	storage, _ := iproxy.GetMessageStorage(mreq.Storage)
+	if storage == nil {
+		ErrorResponse(c, fmt.Sprintf("storage with id %d does not exist", mreq.Storage))
+		return
+	}
+
+	if mreq.Key == "" {
+		ErrorResponse(c, "key value is required")
+		return
+	}
+
+	err := storage.SetPluginValue(mreq.Key, mreq.Value)
+	if err != nil {
+		ErrorResponse(c, fmt.Sprintf("error saving value: %s", err.Error()))
+		return
+	}
+
+	MessageResponse(c, &successResult{Success: true})
+}
+
+type getPluginValueMessage struct {
+	Key     string
+	Storage int
+}
+
+type getPluginValueResponse struct {
+	Value     string
+	Success   bool
+}
+
+func getPluginValueHandler(b []byte, c net.Conn, logger *log.Logger, iproxy *InterceptingProxy) {
+	mreq := getPluginValueMessage{}
+
+	if err := json.Unmarshal(b, &mreq); err != nil {
+		ErrorResponse(c, "error parsing message")
+		return
+	}
+
+	if mreq.Storage == 0 {
+		ErrorResponse(c, "storage is required")
+		return
+	}
+
+	storage, _ := iproxy.GetMessageStorage(mreq.Storage)
+	if storage == nil {
+		ErrorResponse(c, fmt.Sprintf("storage with id %d does not exist", mreq.Storage))
+		return
+	}
+
+	if mreq.Key == "" {
+		ErrorResponse(c, "key value is required")
+		return
+	}
+
+	value, err := storage.GetPluginValue(mreq.Key)
+	if err != nil {
+		ErrorResponse(c, fmt.Sprintf("error getting value: %s", err.Error()))
+		return
+	}
+
+	MessageResponse(c, &getPluginValueResponse{Value: value, Success: true})
 }
 

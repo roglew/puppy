@@ -1651,3 +1651,68 @@ func (ms *SQLiteStorage) EndWatch(watcher StorageWatcher) error {
 	ms.mtx.Unlock()
 	return nil
 }
+
+func (ms *SQLiteStorage) SetPluginValue(key string, value string) error {
+	ms.mtx.Lock()
+	defer ms.mtx.Unlock()
+	tx, err := ms.dbConn.Begin()
+	if err != nil {
+		return err
+	}
+	err = ms.setPluginValue(tx, key, value)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	tx.Commit()
+	return nil
+}
+
+func (ms *SQLiteStorage) setPluginValue(tx *sql.Tx, key string, value string) error {
+	stmt, err := tx.Prepare(`
+    INSERT OR REPLACE INTO plugin_data (
+            key,
+            value
+    ) VALUES (?, ?);
+    `)
+	if err != nil {
+		return fmt.Errorf("error preparing statement to insert request into database: %s", err.Error())
+	}
+	defer stmt.Close()
+
+	_, err = stmt.Exec(key, value)
+	if err != nil {
+		return fmt.Errorf("error inserting plugin data into database: %s", err.Error())
+	}
+
+	return nil
+}
+
+func (ms *SQLiteStorage) GetPluginValue(key string) (string, error) {
+	ms.mtx.Lock()
+	defer ms.mtx.Unlock()
+	tx, err := ms.dbConn.Begin()
+	if err != nil {
+		return "", err
+	}
+	value, err := ms.getPluginValue(tx, key)
+	if err != nil {
+		tx.Rollback()
+		return "", err
+	}
+	tx.Commit()
+	return value, nil
+}
+
+func (ms *SQLiteStorage) getPluginValue(tx *sql.Tx, key string) (string, error) {
+	var value sql.NullString
+	err := tx.QueryRow(`SELECT value FROM plugin_data WHERE key=?`, key).Scan(
+		&value,
+	)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("plugin data with key %s does not exist", key)
+	} else if err != nil {
+		return "", fmt.Errorf("error loading data from datafile: %s", err.Error())
+	}
+	return value.String, nil
+}
