@@ -36,8 +36,11 @@ https://github.com/elazarl/goproxy
 */
 
 import (
+	"crypto"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rsa"
 	"crypto/sha1"
 	"crypto/sha256"
@@ -45,7 +48,9 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
+	"fmt"
 	"math/big"
+	"math/rand"
 	"net"
 	"runtime"
 	"sort"
@@ -56,20 +61,24 @@ import (
 counterecryptor.go
 */
 
-type counterEncryptorRand struct {
+type CounterEncryptorRand struct {
 	cipher  cipher.Block
 	counter []byte
 	rand    []byte
 	ix      int
 }
 
-func newCounterEncryptorRandFromKey(key interface{}, seed []byte) (r counterEncryptorRand, err error) {
+func NewCounterEncryptorRandFromKey(key interface{}, seed []byte) (r CounterEncryptorRand, err error) {
 	var keyBytes []byte
 	switch key := key.(type) {
 	case *rsa.PrivateKey:
 		keyBytes = x509.MarshalPKCS1PrivateKey(key)
+	case *ecdsa.PrivateKey:
+		if keyBytes, err = x509.MarshalECPrivateKey(key); err != nil {
+			return
+		}
 	default:
-		err = errors.New("only RSA keys supported")
+		err = errors.New("only RSA and ECDSA keys supported")
 		return
 	}
 	h := sha256.New()
@@ -85,14 +94,14 @@ func newCounterEncryptorRandFromKey(key interface{}, seed []byte) (r counterEncr
 	return
 }
 
-func (c *counterEncryptorRand) Seed(b []byte) {
+func (c *CounterEncryptorRand) Seed(b []byte) {
 	if len(b) != len(c.counter) {
 		panic("SetCounter: wrong counter size")
 	}
 	copy(c.counter, b)
 }
 
-func (c *counterEncryptorRand) refill() {
+func (c *CounterEncryptorRand) refill() {
 	c.cipher.Encrypt(c.rand, c.counter)
 	for i := 0; i < len(c.counter); i++ {
 		if c.counter[i]++; c.counter[i] != 0 {
@@ -102,7 +111,7 @@ func (c *counterEncryptorRand) refill() {
 	c.ix = 0
 }
 
-func (c *counterEncryptorRand) Read(b []byte) (n int, err error) {
+func (c *CounterEncryptorRand) Read(b []byte) (n int, err error) {
 	if c.ix == len(c.rand) {
 		c.refill()
 	}
@@ -149,9 +158,8 @@ func signHost(ca tls.Certificate, hosts []string) (cert tls.Certificate, err err
 	if err != nil {
 		panic(err)
 	}
-	hash := hashSorted(append(hosts, goproxySignerVersion, ":"+runtime.Version()))
-	serial := new(big.Int)
-	serial.SetBytes(hash)
+
+	serial := big.NewInt(rand.Int63())
 	template := x509.Certificate{
 		// TODO(elazar): instead of this ugly hack, just encode the certificate and hash the binary form.
 		SerialNumber: serial,
@@ -171,22 +179,41 @@ func signHost(ca tls.Certificate, hosts []string) (cert tls.Certificate, err err
 			template.IPAddresses = append(template.IPAddresses, ip)
 		} else {
 			template.DNSNames = append(template.DNSNames, h)
+			template.Subject.CommonName = h
 		}
 	}
-	var csprng counterEncryptorRand
-	if csprng, err = newCounterEncryptorRandFromKey(ca.PrivateKey, hash); err != nil {
+
+	hash := hashSorted(append(hosts, goproxySignerVersion, ":"+runtime.Version()))
+	var csprng CounterEncryptorRand
+	if csprng, err = NewCounterEncryptorRandFromKey(ca.PrivateKey, hash); err != nil {
 		return
 	}
-	var certpriv *rsa.PrivateKey
-	if certpriv, err = rsa.GenerateKey(&csprng, 1024); err != nil {
-		return
+
+	var certpriv crypto.Signer
+	switch ca.PrivateKey.(type) {
+	case *rsa.PrivateKey:
+		if certpriv, err = rsa.GenerateKey(&csprng, 2048); err != nil {
+			return
+		}
+	case *ecdsa.PrivateKey:
+		if certpriv, err = ecdsa.GenerateKey(elliptic.P256(), &csprng); err != nil {
+			return
+		}
+	default:
+		err = fmt.Errorf("unsupported key type %T", ca.PrivateKey)
 	}
+
 	var derBytes []byte
-	if derBytes, err = x509.CreateCertificate(&csprng, &template, x509ca, &certpriv.PublicKey, ca.PrivateKey); err != nil {
+	if derBytes, err = x509.CreateCertificate(&csprng, &template, x509ca, certpriv.Public(), ca.PrivateKey); err != nil {
 		return
 	}
 	return tls.Certificate{
 		Certificate: [][]byte{derBytes, ca.Certificate[0]},
 		PrivateKey:  certpriv,
 	}, nil
+}
+
+func init() {
+	// Avoid deterministic random numbers
+	rand.Seed(time.Now().UnixNano())
 }
